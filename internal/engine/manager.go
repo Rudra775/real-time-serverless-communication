@@ -11,6 +11,8 @@ type Manager struct {
 	clientsMu  sync.RWMutex       // Protects the map from concurrent access
 	Register   chan *Client       // Channel to add new clients safely
 	Unregister chan *Client       // Channel to remove disconnected clients
+
+	Broadcast chan []byte
 }
 
 // NewManager creates the central hub
@@ -19,6 +21,7 @@ func NewManager() *Manager {
 		clients:    make(map[string]*Client),
 		Register:   make(chan *Client),
 		Unregister: make(chan *Client),
+		Broadcast:  make(chan []byte),
 	}
 }
 
@@ -40,6 +43,21 @@ func (m *Manager) Start() {
 			}
 			m.clientsMu.Unlock()
 			log.Printf("Client disconnected: %s", client.ID)
+
+		case msg := <-m.Broadcast:
+			// When we receive a message, send it to ALL connected clients
+			// (For MVP, we broadcast to everyone. Later we will filter by RoomID)
+			m.clientsMu.RLock()
+			for _, client := range m.clients {
+				select {
+				case client.Send <- msg:
+				default:
+					close(client.Send)
+					delete(m.clients, client.ID)
+				}
+			}
+			m.clientsMu.RUnlock()
 		}
+
 	}
 }
