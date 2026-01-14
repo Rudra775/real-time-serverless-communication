@@ -38,3 +38,26 @@ func (b *RedisBroker) Subscribe(ctx context.Context, channel string) <-chan []by
 
 	return msgChan
 }
+
+// SaveMessage stores a message in a user's personal inbox (List)
+func (b *RedisBroker) SaveMessage(ctx context.Context, userID string, msg []byte) error {
+	key := "inbox:" + userID
+	return b.Client.RPush(ctx, key, msg).Err()
+}
+
+// GetPendingMessages retrieves all messages currently in the inbox
+func (b *RedisBroker) GetPendingMessages(ctx context.Context, userID string) ([][]byte, error) {
+	key := "inbox:" + userID
+	// LRANGE 0 -1 gets EVERYTHING in the list
+	result, err := b.Client.LRange(ctx, key, 0, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert string slice to byte slice
+	msgs := make([][]byte, len(result))
+	for i, s := range result {
+		msgs[i] = []byte(s)
+	}
+	return msgs, nil
+}
