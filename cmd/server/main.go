@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/Rudra775/real-time-serverless-communication/internal/broker"
 	"github.com/Rudra775/real-time-serverless-communication/internal/engine"
@@ -63,6 +62,14 @@ func main() {
 			Send: make(chan []byte, 256), // Buffer up to 256 messages
 		}
 
+		log.Printf("Checking inbox for %s...", clientID)
+		missedMsgs, _ := redisBroker.GetPendingMessages(r.Context(), clientID)
+
+		// Push missed messages to the client immediately
+		for _, msgBytes := range missedMsgs {
+			client.Send <- msgBytes
+		}
+
 		// Register client with the manager
 		mgr.Register <- client
 
@@ -77,32 +84,33 @@ func main() {
 
 	// POST /send -> Publish to Redis
 	r.Post("/send", func(w http.ResponseWriter, r *http.Request) {
-		// Parse the body
 		var payload map[string]interface{}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			http.Error(w, "Invalid JSON", http.StatusBadRequest)
 			return
 		}
 
-		// Prepare the message object
+		// 1. Check if this is a Direct Message
+		targetUser, _ := payload["to_user"].(string)
+
 		msg := engine.Message{
 			Type:    "broadcast",
-			Payload: marshalPayload(payload), // Helper to convert map back to json.RawMessage
+			Payload: marshalPayload(payload),
 			RoomID:  "general",
 		}
-
-		// Convert to bytes
 		data, _ := json.Marshal(msg)
 
-		// Fire and Forget (Publish to Redis)
-		// We use a short timeout context so we don't block forever if Redis is down
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
+		ctx := context.Background()
 
-		if err := redisBroker.Publish(ctx, "general", data); err != nil {
-			http.Error(w, "Failed to publish", http.StatusInternalServerError)
-			return
+		// 2. RELIABILITY FIX: If it's for a specific user, save to their inbox!
+		if targetUser != "" {
+			log.Printf("Saving message to inbox for %s", targetUser)
+			// Save to Redis List "inbox:targetUser"
+			redisBroker.SaveMessage(ctx, targetUser, data)
 		}
+
+		// 3. Publish as usual (Real-time delivery)
+		redisBroker.Publish(ctx, "general", data)
 
 		w.Write([]byte("Message sent"))
 	})
