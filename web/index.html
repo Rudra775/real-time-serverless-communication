@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Engine</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f0f0f0; }
+        #messages { background: white; padding: 20px; border: 1px solid #ccc; height: 300px; overflow-y: scroll; }
+        .msg { border-bottom: 1px solid #eee; padding: 5px 0; }
+        .system { color: #888; font-style: italic; }
+    </style>
+</head>
+<body>
+    <h2>Distributed Real-Time Engine</h2>
+    <div id="status">🔴 Disconnected</div>
+    <div id="messages"></div>
+
+    <script>
+        const output = document.getElementById('messages');
+        const status = document.getElementById('status');
+        
+        // Random User ID for testing
+        const userId = 'user_' + Math.floor(Math.random() * 1000);
+        
+        // 1. Connect to our Go Server (SSE)
+        // Note: connecting to port 8080 (Server A)
+        const eventSource = new EventSource(`http://localhost:8080/connect?id=${userId}`);
+
+        eventSource.onopen = () => {
+            status.innerHTML = `🟢 Connected as ${userId}`;
+            log("System", "Connection established");
+        };
+
+        eventSource.onmessage = (event) => {
+            // 2. Handle incoming raw data
+            // We expect JSON, so let's try to parse it
+            try {
+                const data = JSON.parse(event.data);
+                // Extract the payload if it's nested
+                const content = data.payload ? JSON.stringify(data.payload) : event.data;
+                log("Server", content);
+            } catch (e) {
+                log("Server", event.data);
+            }
+        };
+
+        eventSource.onerror = (err) => {
+            status.innerHTML = "🔴 Disconnected (Reconnecting...)";
+            log("System", "Connection lost");
+        };
+
+        function log(sender, msg) {
+            const div = document.createElement('div');
+            div.className = 'msg';
+            div.innerHTML = `<strong>${sender}:</strong> ${msg}`;
+            output.appendChild(div);
+            output.scrollTop = output.scrollHeight;
+        }
+    </script>
+</body>
+</html>

@@ -45,6 +45,10 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "web/index.html")
+	})
+
 	// Define Routes
 	r.Get("/connect", func(w http.ResponseWriter, r *http.Request) {
 		// Simple ID generation for MVP (use UUID in production)
