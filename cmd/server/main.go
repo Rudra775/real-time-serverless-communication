@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/Rudra775/real-time-serverless-communication/internal/broker"
@@ -15,7 +16,13 @@ import (
 
 func main() {
 
-	redisBroker := broker.NewRedisBroker("localhost:6379")
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+
+	log.Printf("Connecting to Redis at %s...", redisAddr)
+	redisBroker := broker.NewRedisBroker(redisAddr)
 
 	// Initialize the Engine
 	mgr := engine.NewManager()

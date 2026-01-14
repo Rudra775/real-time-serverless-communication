@@ -1,7 +1,28 @@
 version: '3.8'
+
 services:
   redis:
     image: redis:7-alpine
+    container_name: realtime_redis
     ports:
       - "6379:6379"
-    container_name: realtime_redis
+
+  server-a:
+    build: .
+    container_name: server_a
+    environment:
+      - REDIS_ADDR=redis:6379  # Tries to connect to the 'redis' service above
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+
+  server-b:
+    build: .
+    container_name: server_b
+    environment:
+      - REDIS_ADDR=redis:6379
+    ports:
+      - "8081:8080" # Maps Host Port 8081 -> Container Port 8080
+    depends_on:
+      - redis
