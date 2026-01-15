@@ -61,3 +61,9 @@ func (b *RedisBroker) GetPendingMessages(ctx context.Context, userID string) ([]
 	}
 	return msgs, nil
 }
+
+func (b *RedisBroker) ClearInbox(ctx context.Context, userId string) error {
+	key := "inbox:" + userId
+
+	return b.Client.Del(ctx, key).Err()
+}
