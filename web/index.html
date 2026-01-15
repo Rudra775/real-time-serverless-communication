@@ -30,6 +30,12 @@
         eventSource.onopen = () => {
             status.innerHTML = `🟢 Connected as ${userId}`;
             log("System", "Connection established");
+
+            fetch('/ack', {
+                method: 'POST',
+                body: JSON.stringify({ user_id: userId }),
+                headers: { 'Content-Type': 'application/json' }
+            });
         };
 
         eventSource.onmessage = (event) => {
