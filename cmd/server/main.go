@@ -115,6 +115,24 @@ func main() {
 		w.Write([]byte("Message sent"))
 	})
 
+	r.Post("/ack", func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]string
+
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		userId := payload["user_id"]
+		if userId == "" {
+			http.Error(w, "Missing user_id", http.StatusBadRequest)
+			return
+		}
+
+		redisBroker.ClearInbox(r.Context(), userId)
+		w.Write([]byte("Acknowledged"))
+	})
+
 	// 4. Start Server
 	log.Println("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", r); err != nil {
