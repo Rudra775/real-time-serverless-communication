@@ -20,6 +20,7 @@ func (c *Client) ServeSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	flusher.Flush()
 
 	// 2. Listen for messages or context cancellation
 	for {
