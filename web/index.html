@@ -2,67 +2,119 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real-Time Engine</title>
+    <title>Real-Time SSE Engine</title>
     <style>
-        body { font-family: monospace; padding: 20px; background: #f0f0f0; }
-        #messages { background: white; padding: 20px; border: 1px solid #ccc; height: 300px; overflow-y: scroll; }
-        .msg { border-bottom: 1px solid #eee; padding: 5px 0; }
-        .system { color: #888; font-style: italic; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; background: #f4f4f9; }
+        .card { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        #chat { height: 300px; overflow-y: scroll; border: 1px solid #eee; padding: 1rem; margin-bottom: 1rem; border-radius: 8px; background: #fafafa; }
+        .msg { margin-bottom: 0.5rem; padding: 0.5rem; border-radius: 4px; animation: fadeIn 0.3s ease; }
+        .msg.sent { background: #e3f2fd; text-align: right; }
+        .msg.received { background: #fff; border: 1px solid #eee; }
+        .controls { display: flex; gap: 10px; }
+        input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+        button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; }
+        button:hover { background: #0056b3; }
+        #status { font-size: 0.85rem; color: #666; margin-bottom: 1rem; }
+        .status-dot { height: 8px; width: 8px; background-color: #bbb; border-radius: 50%; display: inline-block; margin-right: 5px; }
+        .online { background-color: #28a745; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
 <body>
-    <h2>Distributed Real-Time Engine</h2>
-    <div id="status">🔴 Disconnected</div>
-    <div id="messages"></div>
+    <div class="card">
+        <h2>⚡ Real-Time SSE Engine</h2>
+        <div id="status"><span class="status-dot" id="dot"></span><span id="statusText">Disconnected</span></div>
+        <div id="chat"></div>
+        <div class="controls">
+            <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </div>
 
     <script>
-        const output = document.getElementById('messages');
-        const status = document.getElementById('status');
-        
-        // Random User ID for testing
-        const userId = 'user_' + Math.floor(Math.random() * 1000);
-        
-        // 1. Connect to our Go Server (SSE)
-        // Note: connecting to port 8080 (Server A)
-        const eventSource = new EventSource(`http://localhost:8080/connect?id=${userId}`);
+        // Generate a random user ID for demo purposes
+        const userId = 'user_' + Math.floor(Math.random() * 10000);
+        const eventSource = new EventSource(`http://localhost/connect?id=${userId}`);
+        const chat = document.getElementById('chat');
+        const dot = document.getElementById('dot');
+        const statusText = document.getElementById('statusText');
+
+// 1. Handle Incoming Messages (SSE)
+eventSource.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+    
+    console.log("Debug Packet:", data); // Check console to see the real structure!
+
+    let messageText = "Error: Unknown format";
+
+    // 1. Check if it's wrapped in the Go Engine "Payload" (Capitalized)
+    if (data.Payload && data.Payload.message) {
+        messageText = data.Payload.message;
+    } 
+    // 2. Check if it's wrapped in lowercase "payload"
+    else if (data.payload && data.payload.message) {
+        messageText = data.payload.message;
+    }
+    // 3. Check if it's a direct message (Simple JSON)
+    else if (data.message) {
+        messageText = data.message;
+    } 
+    // 4. Fallback: If we still can't find it, print the raw data so we know why
+    else {
+        messageText = JSON.stringify(data);
+    }
+
+    addMessage(messageText, 'received');
+};
 
         eventSource.onopen = () => {
-            status.innerHTML = `🟢 Connected as ${userId}`;
-            log("System", "Connection established");
-
-            fetch('/ack', {
-                method: 'POST',
-                body: JSON.stringify({ user_id: userId }),
-                headers: { 'Content-Type': 'application/json' }
-            });
+            dot.classList.add('online');
+            statusText.innerText = `Connected as ${userId}`;
         };
 
-        eventSource.onmessage = (event) => {
-            // 2. Handle incoming raw data
-            // We expect JSON, so let's try to parse it
+        eventSource.onerror = () => {
+            dot.classList.remove('online');
+            statusText.innerText = 'Disconnected (Reconnecting...)';
+        };
+
+        // 2. Send Messages (HTTP POST)
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const text = input.value;
+            if (!text) return;
+
+            // Optimistic UI update
+            addMessage(text, 'sent');
+            input.value = '';
+
             try {
-                const data = JSON.parse(event.data);
-                // Extract the payload if it's nested
-                const content = data.payload ? JSON.stringify(data.payload) : event.data;
-                log("Server", content);
-            } catch (e) {
-                log("Server", event.data);
+                await fetch('http://localhost/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        message: text, 
+                        user_id: userId,
+                        channel: 'general' 
+                    })
+                });
+            } catch (err) {
+                console.error("Failed to send", err);
+                addMessage("❌ Failed to send", 'received');
             }
-        };
-
-        eventSource.onerror = (err) => {
-            status.innerHTML = "🔴 Disconnected (Reconnecting...)";
-            log("System", "Connection lost");
-        };
-
-        function log(sender, msg) {
-            const div = document.createElement('div');
-            div.className = 'msg';
-            div.innerHTML = `<strong>${sender}:</strong> ${msg}`;
-            output.appendChild(div);
-            output.scrollTop = output.scrollHeight;
         }
+
+        function addMessage(text, type) {
+            const div = document.createElement('div');
+            div.className = `msg ${type}`;
+            div.innerText = text;
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+        
+        // Allow pressing Enter to send
+        document.getElementById('messageInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
     </script>
 </body>
 </html>
