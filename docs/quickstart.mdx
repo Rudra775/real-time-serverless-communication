@@ -1,0 +1,39 @@
+---
+title: Quickstart
+description: "Get the engine running locally in under 2 minutes."
+---
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+* [Go 1.22+](https://go.dev/dl/)
+* [Redis](https://redis.io/docs/getting-started/) (running on port 6379)
+
+## Installation
+
+<CodeGroup>
+
+```bash Clone
+git clone [https://github.com/your-username/realtime-go.git](https://github.com/your-username/realtime-go.git)
+cd realtime-go
+go mod download
+
+</CodeGroup>
+
+## Running the Server
+
+You can run the server directly using Go, or spin it up with Docker.
+
+<Tabs> <Tab title="Go (Local)"> Ensure Redis is running, then start the server:
+
+```bash
+go run main.go
+```
+The server will start on `http://localhost:8080`.
+</Tab> <Tab title="Docker"> If you have the docker-compose.yml configured:
+
+```bash
+docker-compose up --build
+```
+</Tab> </Tabs>

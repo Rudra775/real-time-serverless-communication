@@ -1,0 +1,62 @@
+API Reference
+
+All endpoints are HTTP-based and stateless.
+
+Connect (SSE Stream)
+GET /connect?id={user_id}
+
+Establishes a Server-Sent Events stream for a user.
+
+Query Parameters
+
+id — unique user identifier
+
+Behavior
+
+Delivers real-time messages
+
+Replays stored inbox messages on reconnect
+
+Send Message
+POST /send
+
+Send a message to a user or channel.
+
+Request Body
+
+{
+  "channel": "global",
+  "to_user": "user-42",
+  "message": "Hello from the system"
+}
+
+<CodeGroup> ```bash curl -X POST http://localhost/send \ -H "Content-Type: application/json" \ -d '{ "channel": "global", "to_user": "user-42", "message": "Hello from the system" }' ``` </CodeGroup>
+
+Notes
+
+If the user is offline, the message is persisted
+
+Delivery is guaranteed at least once
+
+Acknowledge Receipt
+POST /ack
+
+Clients must acknowledge messages after processing.
+
+Request Body
+
+{
+  "user_id": "user-42",
+  "message_id": "abc123"
+}
+
+<CodeGroup> ```bash curl -X POST http://localhost/ack \ -H "Content-Type: application/json" \ -d '{ "user_id": "user-42", "message_id": "abc123" }' ``` </CodeGroup>
+
+Why This Matters
+
+Prevents duplicate delivery on reconnect
+
+Enables safe retries and failover
+
+Delivery Guarantees
+<Note> This system guarantees **at-least-once delivery**. Clients must be idempotent. </Note>

@@ -1,0 +1,46 @@
+Architecture Overview
+
+Real-Time Engine is intentionally simple — every component has a single responsibility.
+
+Connection Flow
+1. Ingress — Load Balancing
+
+All traffic enters through Nginx.
+
+Round-robin routing across Go sidecar nodes
+
+No sticky sessions
+
+Nodes are interchangeable and disposable
+
+2. Sync — Redis Pub/Sub
+
+When a message is sent:
+
+The receiving node publishes it to Redis
+
+Redis fans it out to all nodes
+
+The node holding the user’s SSE connection delivers it
+
+This guarantees message reach regardless of which node the user is connected to.
+
+3. Persistence — Inbox Pattern
+
+If a user is offline:
+
+The message is stored in inbox:{user_id} (Redis List)
+
+On reconnection, messages are replayed in order
+
+Clients acknowledge receipt via /ack
+
+This provides at-least-once delivery with minimal complexity.
+
+Why SSE Instead of WebSockets?
+Aspect	SSE	WebSockets
+Serverless Friendly	✅	❌
+Proxy Compatibility	✅	⚠️
+Reconnect Semantics	Built-in	Manual
+Complexity	Low	High
+<Note> SSE is unidirectional by design. Clients send messages via standard HTTP POST, which keeps the system stateless and observable. </Note>

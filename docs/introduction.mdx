@@ -1,0 +1,43 @@
+---
+title: Introduction
+description: "A high-performance, serverless-ready real-time communication engine."
+---
+
+<img
+  className="block dark:hidden"
+  src="/images/hero-light.png"
+  alt="Hero Light"
+/>
+<img
+  className="hidden dark:block"
+  src="/images/hero-dark.png"
+  alt="Hero Dark"
+/>
+
+## Overview
+
+This project is a lightweight, scalable engine designed to handle real-time data streaming using **Server-Sent Events (SSE)**. It leverages **Redis Pub/Sub** to allow stateless Go instances to broadcast messages across a distributed system.
+
+<CardGroup cols={2}>
+  <Card
+    title="Golang"
+    icon="golang"
+    href="https://go.dev/"
+  >
+    Built for high concurrency and low latency.
+  </Card>
+  <Card
+    title="Redis Pub/Sub"
+    icon="database"
+    href="https://redis.io/"
+  >
+    Decouples publishers from subscribers for horizontal scaling.
+  </Card>
+</CardGroup>
+
+## Key Features
+
+* **Stateless Architecture**: Any server instance can handle any client.
+* **SSE Streaming**: Native browser support without heavy WebSocket overhead.
+* **ACK Mechanism**: (Optional) Ensures message delivery reliability.
+* **Docker Ready**: Easily deployable via containers.
