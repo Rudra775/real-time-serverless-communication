@@ -25,7 +25,8 @@ func main() {
 
 	// Initialize the Engine
 	mgr := engine.NewManager()
-	go mgr.Start() // Run the manager in a background goroutine
+	// Pass a background context, or a cancelable context if you want to support shutdown
+	go mgr.Start(context.Background())
 
 	// Start the "Subscriber" Loop (The Listener)
 	// This goroutine listens to Redis and pushes messages into the Manager

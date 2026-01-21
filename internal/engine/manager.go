@@ -1,21 +1,19 @@
 package engine
 
 import (
+	"context" // Add this
 	"log"
 	"sync"
 )
 
-// Manager keeps track of all active user sessions
 type Manager struct {
-	clients    map[string]*Client // Map of SessionID -> Client
-	clientsMu  sync.RWMutex       // Protects the map from concurrent access
-	Register   chan *Client       // Channel to add new clients safely
-	Unregister chan *Client       // Channel to remove disconnected clients
-
-	Broadcast chan []byte
+	clients    map[string]*Client
+	clientsMu  sync.RWMutex
+	Register   chan *Client
+	Unregister chan *Client
+	Broadcast  chan []byte
 }
 
-// NewManager creates the central hub
 func NewManager() *Manager {
 	return &Manager{
 		clients:    make(map[string]*Client),
@@ -25,39 +23,54 @@ func NewManager() *Manager {
 	}
 }
 
-// Start begins the event loop (run this in a goroutine)
-func (m *Manager) Start() {
+// Update Start to accept a Context for graceful shutdown
+func (m *Manager) Start(ctx context.Context) {
+	defer func() {
+		// Cleanup when manager stops
+		m.clientsMu.Lock()
+		for _, client := range m.clients {
+			close(client.Send)
+		}
+		m.clientsMu.Unlock()
+	}()
+
 	for {
 		select {
+		case <-ctx.Done():
+			// 1. Graceful Shutdown Signal
+			log.Println("Manager stopping...")
+			return
+
 		case client := <-m.Register:
 			m.clientsMu.Lock()
 			m.clients[client.ID] = client
 			m.clientsMu.Unlock()
-			log.Printf("New client connected: %s", client.ID)
+			log.Printf("Client registered: %s", client.ID)
 
 		case client := <-m.Unregister:
 			m.clientsMu.Lock()
 			if _, ok := m.clients[client.ID]; ok {
 				delete(m.clients, client.ID)
-				close(client.Send) // Close the channel to stop the goroutine
+				close(client.Send)
 			}
 			m.clientsMu.Unlock()
-			log.Printf("Client disconnected: %s", client.ID)
+			log.Printf("Client unregistered: %s", client.ID)
 
 		case msg := <-m.Broadcast:
-			// When we receive a message, send it to ALL connected clients
-			// (For MVP, we broadcast to everyone. Later we will filter by RoomID)
 			m.clientsMu.RLock()
-			for _, client := range m.clients {
+			for id, client := range m.clients {
 				select {
 				case client.Send <- msg:
+					// Message sent successfully
 				default:
+					// 2. CRITICAL FIX: Buffer is full.
+					// Just close the channel. Do NOT delete from map here.
+					// Let the Unregister channel handle the cleanup safely.
 					close(client.Send)
-					delete(m.clients, client.ID)
+					log.Printf("Client %s buffer full, dropping connection.", id)
 				}
 			}
 			m.clientsMu.RUnlock()
 		}
-
 	}
 }
