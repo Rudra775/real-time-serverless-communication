@@ -2,6 +2,9 @@ package broker
 
 import (
 	"context"
+	"fmt"
+	"log"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -10,11 +13,23 @@ type RedisBroker struct {
 	Client *redis.Client
 }
 
-func NewRedisBroker(addr string) *RedisBroker {
+func NewRedisBroker(addr string) (*RedisBroker, error) {
 	rdb := redis.NewClient(&redis.Options{
-		Addr: addr,
+		Addr:        addr,
+		MaxRetries:  3,
+		DialTimeout: 5 * time.Second,
 	})
-	return &RedisBroker{Client: rdb}
+
+	// Verify connection
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("redis connection failed: %w", err)
+	}
+
+	log.Println("Redis connected successfully")
+	return &RedisBroker{Client: rdb}, nil
 }
 
 // Publish sends a message to a specific channel (room)
@@ -66,7 +81,14 @@ func (b *RedisBroker) Subscribe(ctx context.Context, channel string) (<-chan []b
 // SaveMessage stores a message in a user's personal inbox (List)
 func (b *RedisBroker) SaveMessage(ctx context.Context, userID string, msg []byte) error {
 	key := "inbox:" + userID
-	return b.Client.RPush(ctx, key, msg).Err()
+
+	pipe := b.Client.Pipeline()
+	pipe.RPush(ctx, key, msg)
+	pipe.Expire(ctx, key, 24*time.Hour) //Message Expires before 24h
+
+	_, err := pipe.Exec(ctx)
+
+	return err
 }
 
 // GetPendingMessages retrieves all messages currently in the inbox
@@ -86,8 +108,28 @@ func (b *RedisBroker) GetPendingMessages(ctx context.Context, userID string) ([]
 	return msgs, nil
 }
 
-func (b *RedisBroker) ClearInbox(ctx context.Context, userId string) error {
-	key := "inbox:" + userId
+// GetAndClearInbox atomically retrieves and deletes messages
+func (b *RedisBroker) ClearInbox(ctx context.Context, userID string) ([][]byte, error) {
+	key := "inbox:" + userID
 
-	return b.Client.Del(ctx, key).Err()
+	// Use a Lua script for atomicity
+	script := redis.NewScript(`
+        local msgs = redis.call('LRANGE', KEYS[1], 0, -1)
+        redis.call('DEL', KEYS[1])
+        return msgs
+    `)
+
+	result, err := script.Run(ctx, b.Client, []string{key}).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to [][]byte
+	stringSlice := result.([]interface{})
+	msgs := make([][]byte, len(stringSlice))
+	for i, v := range stringSlice {
+		msgs[i] = []byte(v.(string))
+	}
+
+	return msgs, nil
 }

@@ -21,7 +21,10 @@ func main() {
 	}
 
 	log.Printf("Connecting to Redis at %s...", redisAddr)
-	redisBroker := broker.NewRedisBroker(redisAddr)
+	redisBroker, err := broker.NewRedisBroker(redisAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Initialize the Engine
 	mgr := engine.NewManager()
@@ -33,7 +36,13 @@ func main() {
 	go func() {
 		log.Println("Subscribing to Redis channel: 'general'...")
 		ctx := context.Background()
-		msgChan := redisBroker.Subscribe(ctx, "general") // Listening to "general" room for MVP
+		msgChan, cleanup, err := redisBroker.Subscribe(ctx, "general") // Listening to "general" room for MVP
+
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		defer cleanup()
 
 		for msg := range msgChan {
 			mgr.Broadcast <- msg
