@@ -57,20 +57,19 @@ func (m *Manager) Start(ctx context.Context) {
 			log.Printf("Client unregistered: %s", client.ID)
 
 		case msg := <-m.Broadcast:
-			m.clientsMu.RLock()
+			m.clientsMu.Lock() // CHANGE: Use write lock for broadcasts
 			for id, client := range m.clients {
 				select {
 				case client.Send <- msg:
-					// Message sent successfully
+					// Success
 				default:
-					// 2. CRITICAL FIX: Buffer is full.
-					// Just close the channel. Do NOT delete from map here.
-					// Let the Unregister channel handle the cleanup safely.
+					// Buffer full - delete immediately
+					delete(m.clients, id)
 					close(client.Send)
-					log.Printf("Client %s buffer full, dropping connection.", id)
+					log.Printf("Client %s buffer full, dropped", id)
 				}
 			}
-			m.clientsMu.RUnlock()
+			m.clientsMu.Unlock()
 		}
 	}
 }
