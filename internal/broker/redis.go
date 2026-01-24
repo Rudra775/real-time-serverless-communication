@@ -23,20 +23,44 @@ func (b *RedisBroker) Publish(ctx context.Context, channel string, msg []byte) e
 }
 
 // Subscribe listens to a channel and passes messages to a go channel
-func (b *RedisBroker) Subscribe(ctx context.Context, channel string) <-chan []byte {
+func (b *RedisBroker) Subscribe(ctx context.Context, channel string) (<-chan []byte, func(), error) {
 	pubsub := b.Client.Subscribe(ctx, channel)
+
+	//Check if subscription succeeded
+	if _, err := pubsub.Receive(ctx); err != nil {
+		return nil, nil, err
+	}
+
 	msgChan := make(chan []byte)
+
+	// Cleanup function
+	cleanup := func() {
+		pubsub.Close()
+	}
 
 	// Start a goroutine to pump messages from Redis to our channel
 	go func() {
+		defer close(msgChan)
 		ch := pubsub.Channel()
-		for msg := range ch {
-			msgChan <- []byte(msg.Payload)
+
+		for {
+			select {
+			case msg, ok := <-ch:
+				if !ok {
+					return
+				}
+				select {
+				case msgChan <- []byte(msg.Payload):
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
 		}
-		close(msgChan)
 	}()
 
-	return msgChan
+	return msgChan, cleanup, nil
 }
 
 // SaveMessage stores a message in a user's personal inbox (List)
