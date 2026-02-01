@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   realtime_redis:
@@ -17,16 +17,27 @@ services:
       - server_a
       - server_b
 
-  server_a:
-    build: .
-    environment:
-      - REDIS_ADDR=realtime_redis:6379
-    # remove "ports" section here if you want to force traffic through Nginx
-    # or keep them for debugging (8080:8080)
-    expose:
-      - "8080" # Only visible inside Docker network
-    depends_on:
-      - realtime_redis
+server_a:
+  build: .
+  environment:
+    - REDIS_ADDR=realtime_redis:6379
+  expose:
+    - "8080"
+  depends_on:
+    - realtime_redis
+  healthcheck: # ← Add this
+    test:
+      [
+        "CMD",
+        "wget",
+        "--quiet",
+        "--tries=1",
+        "--spider",
+        "http://localhost:8080/health",
+      ]
+    interval: 10s
+    timeout: 3s
+    retries: 3
 
   server_b:
     build: .
