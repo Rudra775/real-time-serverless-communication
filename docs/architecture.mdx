@@ -1,46 +1,339 @@
-Architecture Overview
+---
+title: 'Architecture'
+description: 'Deep dive into how the real-time engine works'
+---
 
-Real-Time Engine is intentionally simple — every component has a single responsibility.
+## System Overview
 
-Connection Flow
-1. Ingress — Load Balancing
+The engine is built on three core principles:
 
-All traffic enters through Nginx.
+<CardGroup cols={3}>
+  <Card title="Stateless" icon="server">
+    Application servers hold no state. They can crash, restart, or scale without data loss.
+  </Card>
+  <Card title="Distributed" icon="network-wired">
+    Redis Pub/Sub synchronizes all server instances in real-time.
+  </Card>
+  <Card title="Reliable" icon="shield-check">
+    The Inbox Pattern ensures messages persist until acknowledged.
+  </Card>
+</CardGroup>
 
-Round-robin routing across Go sidecar nodes
+## High-Level Architecture
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        C1[Browser 1]
+        C2[Browser 2]
+        C3[Browser 3]
+    end
+    
+    subgraph "Load Balancer"
+        LB[Nginx<br/>Round-Robin]
+    end
+    
+    subgraph "Application Tier"
+        S1[Go Server 1]
+        S2[Go Server 2]
+    end
+    
+    subgraph "Message Broker"
+        REDIS[(Redis<br/>Pub/Sub + Lists)]
+    end
+    
+    subgraph "Your Backend"
+        BE[Python/Node/PHP]
+    end
+    
+    C1 -->|GET /connect| LB
+    C2 -->|GET /connect| LB
+    C3 -->|GET /connect| LB
+    
+    LB --> S1
+    LB --> S2
+    
+    S1 <-->|Subscribe/Publish| REDIS
+    S2 <-->|Subscribe/Publish| REDIS
+    
+    S1 -.->|SSE Stream| C1
+    S2 -.->|SSE Stream| C2
+    S2 -.->|SSE Stream| C3
+    
+    BE -->|POST /send| LB
+```
 
-No sticky sessions
+## Component Deep Dive
 
-Nodes are interchangeable and disposable
+### 1. Nginx Load Balancer
 
-2. Sync — Redis Pub/Sub
+**Role:** Entry point for all traffic. Distributes requests across Go instances.
 
-When a message is sent:
+**Key Features:**
+- Least connections algorithm (routes to least busy server)
+- SSE-optimized (disables buffering and caching)
+- Automatic health checks
 
-The receiving node publishes it to Redis
+**Configuration:**
+```nginx
+upstream backend {
+    least_conn;
+    server server_a:8080;
+    server server_b:8080;
+}
 
-Redis fans it out to all nodes
+server {
+    listen 80;
+    
+    location /connect {
+        proxy_pass http://backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;  # Critical for SSE
+        proxy_cache off;
+    }
+}
+```
 
-The node holding the user’s SSE connection delivers it
+<Tip>
+`least_conn` ensures new SSE connections go to the least loaded server, preventing hot spots.
+</Tip>
 
-This guarantees message reach regardless of which node the user is connected to.
+### 2. Go Application Servers
 
-3. Persistence — Inbox Pattern
+**Role:** Handle SSE connections and process incoming messages.
 
-If a user is offline:
+**Key Characteristics:**
+- Stateless (no local storage of messages)
+- Goroutine-based concurrency (10k+ connections per instance)
+- Fast Redis integration with connection pooling
 
-The message is stored in inbox:{user_id} (Redis List)
+**Code Structure:**
+```go
+// Manager handles all active clients
+type Manager struct {
+    clients    map[*Client]bool
+    Register   chan *Client
+    Unregister chan *Client
+    Broadcast  chan []byte
+}
 
-On reconnection, messages are replayed in order
+// Client represents a single SSE connection
+type Client struct {
+    ID   string
+    Send chan []byte  // Buffered channel (256 messages)
+}
+```
 
-Clients acknowledge receipt via /ack
+**Lifecycle:**
+1. Client connects via `/connect?id=user_123`
+2. Server creates Client struct with buffered channel
+3. Server fetches pending messages from Redis
+4. Server flushes pending messages to client
+5. Server registers client with Manager
+6. Manager subscribes to Redis channel "general"
+7. On new message, Manager broadcasts to all clients
+8. On disconnect, Server unregisters client
 
-This provides at-least-once delivery with minimal complexity.
+### 3. Redis (Dual Role)
 
-Why SSE Instead of WebSockets?
-Aspect	SSE	WebSockets
-Serverless Friendly	✅	❌
-Proxy Compatibility	✅	⚠️
-Reconnect Semantics	Built-in	Manual
-Complexity	Low	High
-<Note> SSE is unidirectional by design. Clients send messages via standard HTTP POST, which keeps the system stateless and observable. </Note>
+Redis serves two critical functions:
+
+<Tabs>
+  <Tab title="Pub/Sub (Real-Time Sync)">
+    **Purpose:** Synchronize messages across all server instances.
+    
+    **How it works:**
+```go
+    // Server A receives POST /send
+    redisBroker.Publish(ctx, "general", messageData)
+    
+    // All servers subscribed to "general" receive it
+    msgChan, cleanup, _ := redisBroker.Subscribe(ctx, "general")
+    for msg := range msgChan {
+        manager.Broadcast <- msg  // Forward to connected clients
+    }
+```
+    
+    **Result:** Message sent to Server A is delivered by Server B (which holds the SSE connection).
+  </Tab>
+  
+  <Tab title="Lists (Inbox Pattern)">
+    **Purpose:** Store messages for disconnected users.
+    
+    **How it works:**
+```go
+    // On POST /send with to_user
+    if targetUser != "" {
+        redisBroker.SaveMessage(ctx, targetUser, messageData)
+        // Stored as: RPUSH inbox:user_123 <message>
+    }
+    
+    // On GET /connect
+    missedMsgs, _ := redisBroker.GetPendingMessages(ctx, clientID)
+    // Fetched as: LRANGE inbox:user_123 0 -1
+    
+    for _, msg := range missedMsgs {
+        client.Send <- msg  // Deliver immediately
+    }
+    
+    // On POST /ack
+    redisBroker.ClearInbox(ctx, userID)
+    // Cleared as: DEL inbox:user_123
+```
+    
+    **Result:** Messages persist for 24 hours (configurable TTL) until acknowledged.
+  </Tab>
+</Tabs>
+
+## The Inbox Pattern (Deep Dive)
+
+The Inbox Pattern is what makes this engine reliable.
+
+### Problem: Fire-and-Forget Pub/Sub
+
+Traditional Pub/Sub:
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    participant R as Redis
+    
+    Note over C: User disconnects
+    S->>R: PUBLISH user:123 "Hello"
+    Note over R: No subscribers!<br/>Message lost
+    Note over C: Reconnects later
+    C->>S: Connect
+    Note over C: Never receives "Hello"
+```
+
+### Solution: Inbox Pattern
+
+With persistence:
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    participant R as Redis
+    
+    Note over C: User disconnects
+    S->>R: RPUSH inbox:123 "Hello"
+    S->>R: PUBLISH general "Hello"
+    Note over R: Message stored in List
+    
+    Note over C: Reconnects 1 hour later
+    C->>S: GET /connect?id=123
+    S->>R: LRANGE inbox:123 0 -1
+    R-->>S: ["Hello", "World"]
+    S-->>C: Flush: Hello, World
+    C->>S: POST /ack
+    S->>R: DEL inbox:123
+```
+
+### Implementation Details
+
+**Saving messages:**
+```go
+func (b *RedisBroker) SaveMessage(ctx context.Context, userID string, msg []byte) error {
+    key := "inbox:" + userID
+    
+    pipe := b.Client.Pipeline()
+    pipe.RPush(ctx, key, msg)
+    pipe.Expire(ctx, key, 24*time.Hour)  // Auto-cleanup after 24h
+    
+    _, err := pipe.Exec(ctx)
+    return err
+}
+```
+
+**Retrieving messages:**
+```go
+func (b *RedisBroker) GetPendingMessages(ctx context.Context, userID string) ([][]byte, error) {
+    key := "inbox:" + userID
+    result, err := b.Client.LRange(ctx, key, 0, -1).Result()  // Get all
+    
+    // Convert to [][]byte
+    msgs := make([][]byte, len(result))
+    for i, s := range result {
+        msgs[i] = []byte(s)
+    }
+    return msgs, nil
+}
+```
+
+**Clearing inbox (atomic):**
+```go
+func (b *RedisBroker) ClearInbox(ctx context.Context, userID string) ([][]byte, error) {
+    script := redis.NewScript(`
+        local msgs = redis.call('LRANGE', KEYS[1], 0, -1)
+        redis.call('DEL', KEYS[1])
+        return msgs
+    `)
+    
+    result, err := script.Run(ctx, b.Client, []string{key}).Result()
+    // ... conversion
+}
+```
+
+<Info>
+Using a Lua script ensures the read-and-delete operation is atomic, preventing race conditions.
+</Info>
+
+## Message Flow (Step by Step)
+
+Let's trace a message from your backend to the client:
+
+<Steps>
+  <Step title="Your Backend Sends">
+```python
+    requests.post('http://engine/send', json={
+        'message': 'New notification!',
+        'to_user': 'user_123'
+    })
+```
+  </Step>
+
+  <Step title="Nginx Routes">
+    Request hits Server A (random - could be any instance)
+  </Step>
+
+  <Step title="Server A Processes">
+```go
+    targetUser := payload["to_user"]  // "user_123"
+    
+    msg := engine.Message{
+        Type: "broadcast",
+        Payload: payload,
+        RoomID: "general",
+    }
+    
+    // Save to inbox
+    redisBroker.SaveMessage(ctx, "user_123", msgData)
+    
+    // Publish for real-time
+    redisBroker.Publish(ctx, "general", msgData)
+```
+  </Step>
+
+  <Step title="Redis Broadcasts">
+    All servers subscribed to "general" receive the message.
+    
+    Server B is holding the SSE connection for user_123.
+  </Step>
+
+  <Step title="Server B Delivers">
+```go
+    // Manager receives from Redis
+    msg := <-msgChan
+    manager.Broadcast <- msg
+    
+    // Manager forwards to all clients
+    for client := range manager.clients {
+        client.Send <- msg  // Non-blocking thanks to buffer
+    }
+```
+  </Step>
+
+  <Step title="Client Receives">
+    The client receives the message through the SSE stream and updates the UI.
+  </Step>
+</Steps>

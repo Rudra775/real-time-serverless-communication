@@ -1,43 +1,136 @@
 ---
 title: Introduction
-description: "A high-performance, serverless-ready real-time communication engine."
+description: 'Build real-time features without WebSocket complexity'
 ---
 
-<img
-  className="block dark:hidden"
-  src="/images/hero-light.png"
-  alt="Hero Light"
-/>
-<img
-  className="hidden dark:block"
-  src="/images/hero-dark.png"
-  alt="Hero Dark"
-/>
+## What is Real-Time Engine?
 
-## Overview
-
-This project is a lightweight, scalable engine designed to handle real-time data streaming using **Server-Sent Events (SSE)**. It leverages **Redis Pub/Sub** to allow stateless Go instances to broadcast messages across a distributed system.
+A distributed, stateless real-time messaging engine built in Go for developers who need reliable real-time communication in serverless and auto-scaling environments.
 
 <CardGroup cols={2}>
   <Card
-    title="Golang"
-    icon="golang"
-    href="https://go.dev/"
+    title="Quick Start"
+    icon="rocket"
+    href="/quickstart"
   >
-    Built for high concurrency and low latency.
+    Get running in under 5 minutes with Docker
   </Card>
   <Card
-    title="Redis Pub/Sub"
-    icon="database"
-    href="https://redis.io/"
+    title="Architecture"
+    icon="diagram-project"
+    href="/architecture"
   >
-    Decouples publishers from subscribers for horizontal scaling.
+    Understand how the system works
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/api-reference"
+  >
+    Explore all available endpoints
+  </Card>
+  <Card
+    title="Examples"
+    icon="lightbulb"
+    href="/examples/notifications"
+  >
+    See real-world use cases
+  </Card>
+</CardGroup>
+
+## The Problem
+
+Traditional WebSocket architectures break in modern cloud environments:
+
+<AccordionGroup>
+  <Accordion icon="link-slash" title="Sticky Sessions Required">
+    WebSockets need the same server for the entire connection. Load balancers must route based on connection state, not load.
+  </Accordion>
+
+  <Accordion icon="server" title="Stateful Servers">
+    Each server holds connection state in memory. Scaling down means lost connections.
+  </Accordion>
+
+  <Accordion icon="ban" title="Serverless Incompatible">
+    AWS Lambda, Cloud Run, and similar platforms cannot maintain long-lived connections.
+  </Accordion>
+
+  <Accordion icon="triangle-exclamation" title="Complex Failover">
+    When a server crashes, all connected clients disconnect and lose queued messages.
+  </Accordion>
+</AccordionGroup>
+
+## The Solution
+
+This engine decouples connection state from the server using:
+
+<CardGroup cols={3}>
+  <Card title="Server to Client" icon="arrow-right">
+    Server-Sent Events (SSE) for efficient one-way streaming
+  </Card>
+  <Card title="Client to Server" icon="arrow-left">
+    HTTP POST for stateless message ingress
+  </Card>
+  <Card title="Sync and State" icon="database">
+    Redis Pub/Sub + Lists for synchronization and durability
   </Card>
 </CardGroup>
 
 ## Key Features
 
-* **Stateless Architecture**: Any server instance can handle any client.
-* **SSE Streaming**: Native browser support without heavy WebSocket overhead.
-* **ACK Mechanism**: (Optional) Ensures message delivery reliability.
-* **Docker Ready**: Easily deployable via containers.
+<Check>Horizontal Scalability - Add instances without reconfiguration</Check>
+<Check>Fault Tolerance - Node crashes do not lose messages</Check>
+<Check>At-Least-Once Delivery - Messages persist until acknowledged</Check>
+<Check>High Performance - 10k+ concurrent connections, sub-10ms latency</Check>
+<Check>Docker-First - Production-ready in 30 seconds</Check>
+
+## Performance
+
+| Metric | Result |
+| :--- | :--- |
+| Throughput | 69 MB / 30s to 200 clients |
+| Latency (P95) | 7.46 ms end-to-end |
+| Concurrency | 10,000+ stable connections |
+| Reliability | 100% (zero drops under load) |
+
+<Tip>
+Full benchmark methodology available in BENCHMARKS.md on GitHub
+</Tip>
+
+## When to Use This
+
+<CardGroup cols={2}>
+  <Card title="Perfect For" icon="check">
+    - Real-time notifications
+    - Live dashboards
+    - Event streaming
+    - Activity feeds
+    - Stock tickers
+    - Collaborative features
+  </Card>
+  <Card title="Not Ideal For" icon="xmark">
+    - Bidirectional chat (use WebRTC)
+    - File uploads
+    - Video streaming
+    - Gaming (use UDP-based solutions)
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick Start"
+    icon="play"
+    href="/quickstart"
+  >
+    Spin up the engine in 5 minutes
+  </Card>
+  <Card
+    title="Architecture Deep Dive"
+    icon="magnifying-glass"
+    href="/architecture"
+  >
+    Learn how it works under the hood
+  </Card>
+</CardGroup>

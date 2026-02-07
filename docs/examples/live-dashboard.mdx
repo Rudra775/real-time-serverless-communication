@@ -1,0 +1,209 @@
+---
+title: 'Live Dashboard'
+description: 'Build a real-time analytics dashboard'
+---
+
+## Overview
+
+Create a live dashboard that updates in real-time without page refresh. Perfect for monitoring metrics, analytics, or system status.
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Analytics" icon="chart-line">
+    Real-time traffic, conversions, revenue
+  </Card>
+  <Card title="System Monitoring" icon="server">
+    Server health, CPU, memory usage
+  </Card>
+  <Card title="Stock Tickers" icon="chart-candlestick">
+    Live price updates, market data
+  </Card>
+  <Card title="Social Feeds" icon="users">
+    Live user activity, engagement metrics
+  </Card>
+</CardGroup>
+
+## Backend Implementation
+
+### Python (Flask)
+```python
+from flask import Flask, jsonify
+import requests
+import random
+from datetime import datetime
+from threading import Thread
+import time
+
+app = Flask(__name__)
+
+REALTIME_ENGINE_URL = 'http://localhost'
+
+def broadcast_metric(metric_name, value):
+    """Broadcast metric update to all connected dashboards."""
+    try:
+        requests.post(f'{REALTIME_ENGINE_URL}/send', json={
+            'message': f'{metric_name} updated',
+            'metric': metric_name,
+            'value': value,
+            'timestamp': datetime.utcnow().isoformat()
+        }, timeout=5)
+    except Exception as e:
+        print(f"Failed to broadcast: {e}")
+
+def generate_live_metrics():
+    """Background thread that generates metrics every second."""
+    while True:
+        metrics = {
+            'active_users': random.randint(100, 500),
+            'requests_per_second': random.randint(50, 200),
+            'response_time_ms': random.randint(10, 100),
+            'error_rate': round(random.uniform(0, 5), 2),
+            'cpu_usage': round(random.uniform(20, 80), 1),
+            'memory_usage': round(random.uniform(30, 70), 1)
+        }
+        
+        for metric_name, value in metrics.items():
+            broadcast_metric(metric_name, value)
+        
+        time.sleep(1)
+
+@app.route('/api/metrics/current', methods=['GET'])
+def get_current_metrics():
+    """Get current snapshot of all metrics."""
+    return jsonify({
+        'active_users': 234,
+        'requests_per_second': 145,
+        'response_time_ms': 45,
+        'error_rate': 1.2,
+        'cpu_usage': 45.3,
+        'memory_usage': 52.1,
+        'timestamp': datetime.utcnow().isoformat()
+    })
+
+if __name__ == '__main__':
+    thread = Thread(target=generate_live_metrics, daemon=True)
+    thread.start()
+    app.run(debug=True)
+```
+
+## Frontend Implementation
+
+### React Dashboard
+```jsx
+import React, { useState, useEffect } from 'react';
+import { TrendingUp, TrendingDown, Activity, Users, Zap, Clock } from 'lucide-react';
+
+function MetricCard({ title, value, unit, icon: Icon, trend }) {
+  const trendColor = trend >= 0 ? 'text-green-500' : 'text-red-500';
+  const TrendIcon = trend >= 0 ? TrendingUp : TrendingDown;
+
+  return (
+    <div className="bg-white p-6 rounded-lg shadow">
+      <div className="flex items-center justify-between mb-4">
+        <div className="p-2 bg-blue-100 rounded-lg">
+          <Icon className="w-6 h-6 text-blue-600" />
+        </div>
+        <div className={`flex items-center ${trendColor}`}>
+          <TrendIcon className="w-4 h-4 mr-1" />
+          <span className="text-sm">{Math.abs(trend)}%</span>
+        </div>
+      </div>
+      <h3 className="text-gray-500 text-sm mb-1">{title}</h3>
+      <p className="text-3xl font-bold">
+        {value}
+        {unit && <span className="text-lg text-gray-500 ml-1">{unit}</span>}
+      </p>
+    </div>
+  );
+}
+
+export default function LiveDashboard() {
+  const [metrics, setMetrics] = useState({
+    active_users: 0,
+    requests_per_second: 0,
+    response_time_ms: 0,
+    error_rate: 0,
+    cpu_usage: 0,
+    memory_usage: 0,
+  });
+
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/metrics/current')
+      .then(res => res.json())
+      .then(data => setMetrics(data));
+
+    const eventSource = new EventSource('http://localhost/connect?id=dashboard');
+
+    eventSource.onopen = () => setConnected(true);
+    
+    eventSource.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      const payload = data.payload;
+
+      if (payload.metric) {
+        setMetrics(prev => ({
+          ...prev,
+          [payload.metric]: payload.value,
+        }));
+      }
+
+      fetch('http://localhost/ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: 'dashboard' }),
+      });
+    };
+
+    eventSource.onerror = () => setConnected(false);
+
+    return () => eventSource.close();
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-8">
+      <div className="max-w-7xl mx-auto">
+        <div className="mb-8 flex items-center justify-between">
+          <h1 className="text-3xl font-bold">Live Dashboard</h1>
+          <div className="flex items-center">
+            <div className={`w-3 h-3 rounded-full mr-2 ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="text-sm text-gray-600">
+              {connected ? 'Connected' : 'Disconnected'}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <MetricCard title="Active Users" value={metrics.active_users} icon={Users} trend={5.2} />
+          <MetricCard title="Requests/sec" value={metrics.requests_per_second} icon={Zap} trend={-2.1} />
+          <MetricCard title="Response Time" value={metrics.response_time_ms} unit="ms" icon={Clock} trend={-12.5} />
+          <MetricCard title="Error Rate" value={metrics.error_rate} unit="%" icon={Activity} trend={3.4} />
+          <MetricCard title="CPU Usage" value={metrics.cpu_usage} unit="%" icon={Activity} trend={8.1} />
+          <MetricCard title="Memory Usage" value={metrics.memory_usage} unit="%" icon={Activity} trend={-1.5} />
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+## Best Practices
+
+<Check>Update metrics at appropriate intervals (1-5 seconds)</Check>
+<Check>Show connection status to users</Check>
+<Check>Use efficient data structures for history</Check>
+<Check>Implement alerts for critical thresholds</Check>
+<Check>Gracefully handle disconnections</Check>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Chat Application" icon="messages" href="/examples/chat">
+    Build a real-time chat application
+  </Card>
+  <Card title="Scaling Guide" icon="chart-line" href="/concepts/scaling">
+    Scale to handle millions of updates
+  </Card>
+</CardGroup>

@@ -1,0 +1,119 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Real-Time Serverless Communication",
+  "colors": {
+    "primary": "#16A34A",
+    "light": "#07C983",
+    "dark": "#15803D"
+  },
+  "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/Rudra775/real-time-serverless-communication"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Get Started",
+      "href": "/quickstart"
+    }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/sse-vs-websockets",
+              "concepts/inbox-pattern",
+              "concepts/scaling"
+            ]
+          },
+          {
+            "group": "Integration Guides",
+            "pages": [
+              "guides/python-integration",
+              "guides/nodejs-integration",
+              "guides/go-integration",
+              "guides/deployment"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "API Documentation",
+            "pages": [
+              "api-reference/overview",
+              "api-reference/connect",
+              "api-reference/send",
+              "api-reference/ack"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Examples",
+        "groups": [
+          {
+            "group": "Use Cases",
+            "pages": [
+              "examples/notifications",
+              "examples/live-dashboard",
+              "examples/chat"
+            ]
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "GitHub Repository",
+          "href": "https://github.com/Rudra775/real-time-serverless-communication",
+          "icon": "github"
+        },
+        {
+          "anchor": "Discord Community",
+          "href": "https://discord.gg/your-server",
+          "icon": "discord"
+        }
+      ]
+    }
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "cursor"
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/Rudra775/real-time-serverless-communication",
+      "x": "https://x.com/yourhandle"
+    }
+  }
+}

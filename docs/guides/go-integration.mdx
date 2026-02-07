@@ -1,0 +1,545 @@
+---
+title: 'Go Integration'
+description: 'Integrate the real-time engine with your Go backend'
+---
+
+## Overview
+
+This guide shows how to integrate the real-time engine with Go backends.
+
+## Installation
+```bash
+go get -u github.com/go-resty/resty/v2
+```
+
+## Basic Integration
+
+### Realtime Client
+
+Create `pkg/realtime/client.go`:
+```go
+package realtime
+
+import (
+    "context"
+    "fmt"
+    "time"
+
+    "github.com/go-resty/resty/v2"
+)
+
+type Client struct {
+    baseURL string
+    client  *resty.Client
+}
+
+type SendMessageRequest struct {
+    Message string                 `json:"message"`
+    ToUser  string                 `json:"to_user,omitempty"`
+    Extra   map[string]interface{} `json:"-"`
+}
+
+func NewClient(baseURL string) *Client {
+    return &Client{
+        baseURL: baseURL,
+        client: resty.New().
+            SetTimeout(5 * time.Second).
+            SetRetryCount(3).
+            SetRetryWaitTime(1 * time.Second),
+    }
+}
+
+func (c *Client) SendMessage(ctx context.Context, req SendMessageRequest) error {
+    payload := map[string]interface{}{
+        "message": req.Message,
+    }
+
+    if req.ToUser != "" {
+        payload["to_user"] = req.ToUser
+    }
+
+    for k, v := range req.Extra {
+        payload[k] = v
+    }
+
+    resp, err := c.client.R().
+        SetContext(ctx).
+        SetBody(payload).
+        Post(c.baseURL + "/send")
+
+    if err != nil {
+        return fmt.Errorf("failed to send message: %w", err)
+    }
+
+    if resp.StatusCode() != 200 {
+        return fmt.Errorf("unexpected status code: %d", resp.StatusCode())
+    }
+
+    return nil
+}
+
+func (c *Client) Acknowledge(ctx context.Context, userID string) error {
+    resp, err := c.client.R().
+        SetContext(ctx).
+        SetBody(map[string]string{"user_id": userID}).
+        Post(c.baseURL + "/ack")
+
+    if err != nil {
+        return fmt.Errorf("failed to acknowledge: %w", err)
+    }
+
+    if resp.StatusCode() != 200 {
+        return fmt.Errorf("unexpected status code: %d", resp.StatusCode())
+    }
+
+    return nil
+}
+```
+
+## HTTP Server Integration
+
+### With net/http
+```go
+package main
+
+import (
+    "context"
+    "encoding/json"
+    "log"
+    "net/http"
+    "os"
+
+    "yourapp/pkg/realtime"
+)
+
+var realtimeClient *realtime.Client
+
+func init() {
+    baseURL := os.Getenv("REALTIME_ENGINE_URL")
+    if baseURL == "" {
+        baseURL = "http://localhost"
+    }
+    realtimeClient = realtime.NewClient(baseURL)
+}
+
+type NotificationRequest struct {
+    Message string `json:"message"`
+    Type    string `json:"type"`
+}
+
+func sendNotificationHandler(w http.ResponseWriter, r *http.Request) {
+    // Get user ID from JWT (simplified)
+    userID := r.Header.Get("X-User-ID")
+    if userID == "" {
+        http.Error(w, "User ID required", http.StatusUnauthorized)
+        return
+    }
+
+    var req NotificationRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid JSON", http.StatusBadRequest)
+        return
+    }
+
+    if req.Message == "" {
+        http.Error(w, "Message is required", http.StatusBadRequest)
+        return
+    }
+
+    // Send via real-time engine
+    err := realtimeClient.SendMessage(r.Context(), realtime.SendMessageRequest{
+        Message: req.Message,
+        ToUser:  userID,
+        Extra: map[string]interface{}{
+            "notification_type": req.Type,
+            "timestamp":         time.Now().UTC().Format(time.RFC3339),
+        },
+    })
+
+    if err != nil {
+        log.Printf("Failed to send notification: %v", err)
+        http.Error(w, "Failed to send notification", http.StatusInternalServerError)
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{"status": "sent"})
+}
+
+func broadcastHandler(w http.ResponseWriter, r *http.Request) {
+    var req NotificationRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid JSON", http.StatusBadRequest)
+        return
+    }
+
+    err := realtimeClient.SendMessage(r.Context(), realtime.SendMessageRequest{
+        Message: req.Message,
+        Extra: map[string]interface{}{
+            "broadcast_type": "system",
+        },
+    })
+
+    if err != nil {
+        log.Printf("Failed to broadcast: %v", err)
+        http.Error(w, "Failed to broadcast", http.StatusInternalServerError)
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{"status": "broadcast"})
+}
+
+func main() {
+    http.HandleFunc("/api/send-notification", sendNotificationHandler)
+    http.HandleFunc("/api/broadcast", broadcastHandler)
+
+    log.Println("Server starting on :8080")
+    log.Fatal(http.ListenAndServe(":8080", nil))
+}
+```
+
+### With Gin
+```go
+package main
+
+import (
+    "net/http"
+    "time"
+
+    "github.com/gin-gonic/gin"
+    "yourapp/pkg/realtime"
+)
+
+var realtimeClient *realtime.Client
+
+func init() {
+    realtimeClient = realtime.NewClient("http://localhost")
+}
+
+type NotificationRequest struct {
+    Message string `json:"message" binding:"required"`
+    Type    string `json:"type"`
+}
+
+func main() {
+    r := gin.Default()
+
+    // Middleware to extract user from JWT
+    r.Use(func(c *gin.Context) {
+        userID := c.GetHeader("X-User-ID")
+        if userID != "" {
+            c.Set("userID", userID)
+        }
+        c.Next()
+    })
+
+    r.POST("/api/send-notification", func(c *gin.Context) {
+        userID, exists := c.Get("userID")
+        if !exists {
+            c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+            return
+        }
+
+        var req NotificationRequest
+        if err := c.ShouldBindJSON(&req); err != nil {
+            c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+            return
+        }
+
+        err := realtimeClient.SendMessage(c.Request.Context(), realtime.SendMessageRequest{
+            Message: req.Message,
+            ToUser:  userID.(string),
+            Extra: map[string]interface{}{
+                "notification_type": req.Type,
+                "timestamp":         time.Now().UTC().Format(time.RFC3339),
+            },
+        })
+
+        if err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send"})
+            return
+        }
+
+        c.JSON(http.StatusOK, gin.H{"status": "sent"})
+    })
+
+    r.POST("/api/broadcast", func(c *gin.Context) {
+        var req NotificationRequest
+        if err := c.ShouldBindJSON(&req); err != nil {
+            c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+            return
+        }
+
+        err := realtimeClient.SendMessage(c.Request.Context(), realtime.SendMessageRequest{
+            Message: req.Message,
+            Extra:   map[string]interface{}{"broadcast_type": "system"},
+        })
+
+        if err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to broadcast"})
+            return
+        }
+
+        c.JSON(http.StatusOK, gin.H{"status": "broadcast"})
+    })
+
+    r.Run(":8080")
+}
+```
+
+### With Fiber
+```go
+package main
+
+import (
+    "time"
+
+    "github.com/gofiber/fiber/v2"
+    "yourapp/pkg/realtime"
+)
+
+var realtimeClient *realtime.Client
+
+func init() {
+    realtimeClient = realtime.NewClient("http://localhost")
+}
+
+type NotificationRequest struct {
+    Message string `json:"message"`
+    Type    string `json:"type"`
+}
+
+func main() {
+    app := fiber.New()
+
+    app.Post("/api/send-notification", func(c *fiber.Ctx) error {
+        userID := c.Get("X-User-ID")
+        if userID == "" {
+            return c.Status(401).JSON(fiber.Map{"error": "Unauthorized"})
+        }
+
+        var req NotificationRequest
+        if err := c.BodyParser(&req); err != nil {
+            return c.Status(400).JSON(fiber.Map{"error": "Invalid JSON"})
+        }
+
+        err := realtimeClient.SendMessage(c.Context(), realtime.SendMessageRequest{
+            Message: req.Message,
+            ToUser:  userID,
+            Extra: map[string]interface{}{
+                "notification_type": req.Type,
+                "timestamp":         time.Now().UTC().Format(time.RFC3339),
+            },
+        })
+
+        if err != nil {
+            return c.Status(500).JSON(fiber.Map{"error": "Failed to send"})
+        }
+
+        return c.JSON(fiber.Map{"status": "sent"})
+    })
+
+    app.Listen(":8080")
+}
+```
+
+## Background Workers
+
+### Using Goroutines
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "sync"
+    "yourapp/pkg/realtime"
+)
+
+type NotificationWorker struct {
+    client *realtime.Client
+    queue  chan NotificationJob
+    wg     sync.WaitGroup
+}
+
+type NotificationJob struct {
+    UserID  string
+    Message string
+    Extra   map[string]interface{}
+}
+
+func NewNotificationWorker(client *realtime.Client, workers int) *NotificationWorker {
+    w := &NotificationWorker{
+        client: client,
+        queue:  make(chan NotificationJob, 100),
+    }
+
+    // Start worker goroutines
+    for i := 0; i < workers; i++ {
+        w.wg.Add(1)
+        go w.worker()
+    }
+
+    return w
+}
+
+func (w *NotificationWorker) worker() {
+    defer w.wg.Done()
+
+    for job := range w.queue {
+        err := w.client.SendMessage(context.Background(), realtime.SendMessageRequest{
+            Message: job.Message,
+            ToUser:  job.UserID,
+            Extra:   job.Extra,
+        })
+
+        if err != nil {
+            log.Printf("Failed to send notification to %s: %v", job.UserID, err)
+        }
+    }
+}
+
+func (w *NotificationWorker) Enqueue(job NotificationJob) {
+    w.queue <- job
+}
+
+func (w *NotificationWorker) Shutdown() {
+    close(w.queue)
+    w.wg.Wait()
+}
+
+// Usage
+func main() {
+    client := realtime.NewClient("http://localhost")
+    worker := NewNotificationWorker(client, 5) // 5 concurrent workers
+
+    // Enqueue jobs
+    worker.Enqueue(NotificationJob{
+        UserID:  "user_123",
+        Message: "Your order has shipped!",
+        Extra:   map[string]interface{}{"order_id": "ORD-456"},
+    })
+
+    // Graceful shutdown
+    defer worker.Shutdown()
+}
+```
+
+## Error Handling
+```go
+package realtime
+
+import (
+    "context"
+    "errors"
+    "time"
+
+    "github.com/cenkalti/backoff/v4"
+)
+
+var (
+    ErrTimeout     = errors.New("request timeout")
+    ErrUnavailable = errors.New("service unavailable")
+)
+
+func (c *Client) SendMessageWithRetry(ctx context.Context, req SendMessageRequest) error {
+    operation := func() error {
+        return c.SendMessage(ctx, req)
+    }
+
+    b := backoff.NewExponentialBackOff()
+    b.MaxElapsedTime = 30 * time.Second
+
+    err := backoff.Retry(operation, backoff.WithContext(b, ctx))
+    if err != nil {
+        return fmt.Errorf("failed after retries: %w", err)
+    }
+
+    return nil
+}
+```
+
+## Testing
+```go
+package realtime_test
+
+import (
+    "context"
+    "net/http"
+    "net/http/httptest"
+    "testing"
+
+    "yourapp/pkg/realtime"
+)
+
+func TestSendMessage(t *testing.T) {
+    // Mock server
+    server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.URL.Path != "/send" {
+            t.Errorf("Expected /send, got %s", r.URL.Path)
+        }
+
+        w.WriteHeader(http.StatusOK)
+        w.Write([]byte("Message sent"))
+    }))
+    defer server.Close()
+
+    // Test
+    client := realtime.NewClient(server.URL)
+    err := client.SendMessage(context.Background(), realtime.SendMessageRequest{
+        Message: "Test",
+        ToUser:  "user_123",
+    })
+
+    if err != nil {
+        t.Errorf("Expected no error, got %v", err)
+    }
+}
+
+func TestSendMessageError(t *testing.T) {
+    // Mock server with error
+    server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusInternalServerError)
+    }))
+    defer server.Close()
+
+    client := realtime.NewClient(server.URL)
+    err := client.SendMessage(context.Background(), realtime.SendMessageRequest{
+        Message: "Test",
+        ToUser:  "user_123",
+    })
+
+    if err == nil {
+        t.Error("Expected error, got nil")
+    }
+}
+```
+
+## Best Practices
+
+<Check>Use context for cancellation and timeouts</Check>
+<Check>Implement retry logic with exponential backoff</Check>
+<Check>Use worker pools for high-volume notifications</Check>
+<Check>Log errors for debugging</Check>
+<Check>Set appropriate timeouts (5 seconds recommended)</Check>
+<Check>Validate input before sending</Check>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Deployment Guide"
+    icon="rocket"
+    href="/guides/deployment"
+  >
+    Deploy to production
+  </Card>
+  <Card
+    title="Examples"
+    icon="lightbulb"
+    href="/examples/notifications"
+  >
+    See complete implementation examples
+  </Card>
+</CardGroup>

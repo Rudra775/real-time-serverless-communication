@@ -1,0 +1,253 @@
+---
+title: 'Notification System'
+description: 'Build a real-time notification system'
+---
+
+## Overview
+
+Build a production-ready notification system that delivers instant notifications to users across web and mobile.
+
+## Features
+
+<CardGroup cols={2}>
+  <Card title="Instant Delivery" icon="bolt">
+    Notifications appear in under 10ms
+  </Card>
+  <Card title="Offline Support" icon="inbox">
+    Messages persist when users are offline
+  </Card>
+  <Card title="Read Receipts" icon="check-double">
+    Track when users view notifications
+  </Card>
+  <Card title="Multiple Types" icon="bell">
+    Support for alerts, updates, and messages
+  </Card>
+</CardGroup>
+
+## Backend Implementation
+
+### Python (Flask)
+````python
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+import requests
+from datetime import datetime
+
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://localhost/notifications'
+db = SQLAlchemy(app)
+
+REALTIME_ENGINE_URL = 'http://localhost'
+
+class Notification(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.String(50), nullable=False)
+    type = db.Column(db.String(20), nullable=False)
+    title = db.Column(db.String(200), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    link = db.Column(db.String(500))
+    read = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+def send_notification(user_id, notification_type, title, message, link=None):
+    notification = Notification(
+        user_id=user_id,
+        type=notification_type,
+        title=title,
+        message=message,
+        link=link
+    )
+    db.session.add(notification)
+    db.session.commit()
+    
+    try:
+        requests.post(f'{REALTIME_ENGINE_URL}/send', json={
+            'message': title,
+            'to_user': user_id,
+            'notification_id': notification.id,
+            'type': notification_type,
+            'body': message,
+            'link': link,
+            'timestamp': notification.created_at.isoformat()
+        }, timeout=5)
+    except requests.RequestException as e:
+        print(f"Failed to send real-time notification: {e}")
+    
+    return notification
+
+@app.route('/api/notifications/<user_id>', methods=['GET'])
+def get_notifications(user_id):
+    notifications = Notification.query.filter_by(user_id=user_id).order_by(
+        Notification.created_at.desc()
+    ).limit(50).all()
+    
+    return jsonify([{
+        'id': n.id,
+        'type': n.type,
+        'title': n.title,
+        'message': n.message,
+        'link': n.link,
+        'read': n.read,
+        'created_at': n.created_at.isoformat()
+    } for n in notifications])
+
+@app.route('/api/notifications/<int:notification_id>/read', methods=['POST'])
+def mark_as_read(notification_id):
+    notification = Notification.query.get_or_404(notification_id)
+    notification.read = True
+    db.session.commit()
+    
+    return jsonify({'status': 'marked_as_read'})
+
+if __name__ == '__main__':
+    app.run(debug=True)
+````
+
+## Frontend Implementation
+
+### React Component
+````jsx
+import React, { useState, useEffect, useRef } from 'react';
+import { Bell, X, Check } from 'lucide-react';
+
+export default function NotificationCenter({ userId }) {
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [isOpen, setIsOpen] = useState(false);
+  const eventSourceRef = useRef(null);
+
+  useEffect(() => {
+    fetch(`/api/notifications/${userId}`)
+      .then(res => res.json())
+      .then(data => {
+        setNotifications(data);
+        setUnreadCount(data.filter(n => !n.read).length);
+      });
+
+    eventSourceRef.current = new EventSource(`http://localhost/connect?id=${userId}`);
+
+    eventSourceRef.current.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      const payload = data.payload;
+
+      const newNotification = {
+        id: payload.notification_id,
+        type: payload.type,
+        title: payload.message,
+        message: payload.body,
+        link: payload.link,
+        read: false,
+        created_at: payload.timestamp,
+      };
+
+      setNotifications(prev => [newNotification, ...prev]);
+      setUnreadCount(prev => prev + 1);
+
+      if (Notification.permission === 'granted') {
+        new Notification(payload.message, {
+          body: payload.body,
+          icon: '/notification-icon.png',
+        });
+      }
+
+      fetch('http://localhost/ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId }),
+      });
+    };
+
+    return () => {
+      eventSourceRef.current?.close();
+    };
+  }, [userId]);
+
+  const markAsRead = async (notificationId) => {
+    await fetch(`/api/notifications/${notificationId}/read`, {
+      method: 'POST',
+    });
+
+    setNotifications(prev =>
+      prev.map(n => (n.id === notificationId ? { ...n, read: true } : n))
+    );
+    setUnreadCount(prev => Math.max(0, prev - 1));
+  };
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="relative p-2 rounded-full hover:bg-gray-100"
+      >
+        <Bell className="w-6 h-6" />
+        {unreadCount > 0 && (
+          <span className="absolute top-0 right-0 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
+            {unreadCount}
+          </span>
+        )}
+      </button>
+
+      {isOpen && (
+        <div className="absolute right-0 mt-2 w-96 bg-white rounded-lg shadow-lg border z-50">
+          <div className="p-4 border-b flex justify-between items-center">
+            <h3 className="font-semibold">Notifications</h3>
+          </div>
+
+          <div className="max-h-96 overflow-y-auto">
+            {notifications.length === 0 ? (
+              <div className="p-8 text-center text-gray-500">
+                No notifications yet
+              </div>
+            ) : (
+              notifications.map(notification => (
+                <div
+                  key={notification.id}
+                  className={`p-4 border-b hover:bg-gray-50 cursor-pointer ${
+                    !notification.read ? 'bg-blue-50' : ''
+                  }`}
+                  onClick={() => {
+                    if (!notification.read) markAsRead(notification.id);
+                    if (notification.link) window.location.href = notification.link;
+                  }}
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <p className="font-medium">{notification.title}</p>
+                      <p className="text-sm text-gray-600">{notification.message}</p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {new Date(notification.created_at).toLocaleString()}
+                      </p>
+                    </div>
+                    {!notification.read && (
+                      <div className="w-2 h-2 bg-blue-600 rounded-full mt-2" />
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+````
+
+## Best Practices
+
+<Check>Always save notifications to database for history</Check>
+<Check>Implement user preferences for notification types</Check>
+<Check>Use appropriate notification types (success, warning, info)</Check>
+<Check>Include actionable links in notifications</Check>
+<Check>Request browser notification permission gracefully</Check>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Live Dashboard" icon="chart-line" href="/examples/live-dashboard">
+    Build a real-time analytics dashboard
+  </Card>
+  <Card title="Chat Application" icon="messages" href="/examples/chat">
+    Build a real-time chat app
+  </Card>
+</CardGroup>

@@ -1,0 +1,158 @@
+---
+title: 'Connect'
+api: 'GET /connect'
+description: 'Establish a Server-Sent Events connection'
+---
+
+## Overview
+
+Opens a persistent SSE stream for real-time message delivery. Automatically flushes pending messages from the user's Inbox before starting the live stream.
+
+## Endpoint
+GET /connect?id={user_id}
+
+## Query Parameters
+
+<ParamField query="id" type="string" required>
+  Unique identifier for the user/client. Used to route messages and retrieve inbox.
+</ParamField>
+
+## Response
+
+<ResponseField name="Content-Type" type="string">
+  `text/event-stream`
+</ResponseField>
+
+The server sends events in this format:
+data: {"type":"broadcast","payload":{"message":"Hello"},"roomID":"general"}
+data: {"type":"broadcast","payload":{"message":"World"},"roomID":"general"}
+
+## Request Example
+
+<CodeGroup>
+```html JavaScript (Browser)
+const userId = 'user_123';
+const eventSource = new EventSource(`http://localhost/connect?id=${userId}`);
+
+eventSource.onopen = () => {
+  console.log('Connected to real-time engine');
+};
+
+eventSource.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  console.log('Received:', message.payload);
+  
+  // Acknowledge receipt
+  fetch('/ack', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId })
+  });
+};
+
+eventSource.onerror = (error) => {
+  console.log('Connection error, reconnecting...');
+};
+```
+```python Python
+import sseclient
+import requests
+
+def listen_to_messages(user_id):
+    response = requests.get(
+        f'http://localhost/connect?id={user_id}',
+        stream=True,
+        headers={'Accept': 'text/event-stream'}
+    )
+    
+    client = sseclient.SSEClient(response)
+    
+    for event in client.events():
+        message = json.loads(event.data)
+        print(f"Received: {message['payload']}")
+        
+        # Acknowledge
+        requests.post('http://localhost/ack', json={'user_id': user_id})
+```
+```go Go
+package main
+
+import (
+    "bufio"
+    "encoding/json"
+    "fmt"
+    "net/http"
+    "strings"
+)
+
+func main() {
+    resp, _ := http.Get("http://localhost/connect?id=user_123")
+    defer resp.Body.Close()
+    
+    scanner := bufio.NewScanner(resp.Body)
+    for scanner.Scan() {
+        line := scanner.Text()
+        if strings.HasPrefix(line, "data: ") {
+            data := strings.TrimPrefix(line, "data: ")
+            var message map[string]interface{}
+            json.Unmarshal([]byte(data), &message)
+            fmt.Println("Received:", message["payload"])
+        }
+    }
+}
+```
+
+</CodeGroup>
+
+## Behavior
+
+### On Connect
+
+1. Server creates a new Client with buffered channel (capacity 256 messages)
+2. Server retrieves pending messages from Redis: `LRANGE inbox:user_id 0 -1`
+3. Server flushes all pending messages to client immediately
+4. Server registers client with the Manager
+5. Server subscribes to Redis channel "general"
+6. Server opens live SSE stream
+
+### During Connection
+
+- Messages published to "general" channel are delivered instantly
+- Connection kept alive with periodic heartbeat
+- Browser automatically reconnects if connection drops
+
+### On Disconnect
+
+- Server unregisters client from Manager
+- Messages continue to accumulate in Inbox (if `to_user` is specified)
+- On reconnect, pending messages are flushed again
+
+<Tip>
+The browser's EventSource API handles reconnection automatically. You don't need to write reconnection logic!
+</Tip>
+
+## Implementation Details
+
+From the source code:
+```go
+client := &engine.Client{
+    ID:   clientID,
+    Send: make(chan []byte, 256), // Buffer up to 256 messages
+}
+
+// Retrieve missed messages
+missedMsgs, _ := redisBroker.GetPendingMessages(r.Context(), clientID)
+
+// Push to client
+for _, msgBytes := range missedMsgs {
+    client.Send <- msgBytes
+}
+
+// Register and start SSE loop
+mgr.Register <- client
+client.ServeSSE(w, r)
+```
+
+<Note>
+The 256-message buffer prevents blocking if the client is slow to consume messages. Tune this value based on your use case.
+</Note>

@@ -1,39 +1,196 @@
 ---
-title: Quickstart
-description: "Get the engine running locally in under 2 minutes."
+title: 'Quickstart'
+description: 'Get your real-time engine running in 5 minutes'
 ---
 
 ## Prerequisites
 
-Before you begin, ensure you have the following installed:
+Before you begin, ensure you have:
 
-* [Go 1.22+](https://go.dev/dl/)
-* [Redis](https://redis.io/docs/getting-started/) (running on port 6379)
+<CardGroup cols={2}>
+  <Card title="Docker" icon="docker">
+    Docker 20.10+ and Docker Compose
+  </Card>
+  <Card title="Git" icon="git">
+    Git for cloning the repository
+  </Card>
+</CardGroup>
 
 ## Installation
 
-<CodeGroup>
+<Steps>
+  <Step title="Clone the Repository">
+```bash
+    git clone https://github.com/Rudra775/real-time-serverless-communication.git
+    cd real-time-serverless-communication
+```
+  </Step>
 
-```bash Clone
-git clone [https://github.com/your-username/realtime-go.git](https://github.com/your-username/realtime-go.git)
-cd realtime-go
-go mod download
+  <Step title="Start the Engine">
+```bash
+    docker-compose up --build
+```
+    
+    This starts:
+    - Nginx on port 80 (load balancer)
+    - 2 Go servers (application tier)
+    - Redis on port 6379 (message broker)
+  </Step>
+
+  <Step title="Verify It's Running">
+    Open your browser to `http://localhost`
+    
+    You should see the test client interface.
+  </Step>
+</Steps>
+
+<Check>
+Your real-time engine is now running and ready to handle connections.
+</Check>
+
+## Your First Message
+
+Let's send a real-time message to a client.
+
+### Step 1: Open the Test Client
+
+Navigate to `http://localhost` in your browser. You'll see the built-in test client.
+
+### Step 2: Connect a Client
+
+The client auto-connects with a random ID. You'll see:
+Connected as: user_abc123
+
+### Step 3: Send a Message
+
+From your terminal or backend:
+
+<CodeGroup>
+```bash cURL
+curl -X POST http://localhost/send \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Hello from the real-time engine!",
+    "to_user": "user_abc123"
+  }'
+```
+```python Python
+import requests
+
+requests.post('http://localhost/send', json={
+    'message': 'Hello from Python!',
+    'to_user': 'user_abc123'
+})
+```
+```javascript Node.js
+fetch('http://localhost/send', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    message: 'Hello from Node.js!',
+    to_user: 'user_abc123'
+  })
+});
+```
+```go Go
+package main
+
+import (
+    "bytes"
+    "encoding/json"
+    "net/http"
+)
+
+func main() {
+    payload := map[string]string{
+        "message": "Hello from Go!",
+        "to_user": "user_abc123",
+    }
+    
+    data, _ := json.Marshal(payload)
+    http.Post("http://localhost/send", "application/json", bytes.NewBuffer(data))
+}
+```
 
 </CodeGroup>
 
-## Running the Server
+<Check>
+You should see the message appear instantly in your browser!
+</Check>
 
-You can run the server directly using Go, or spin it up with Docker.
+## Testing Reliability (The Inbox Pattern)
 
-<Tabs> <Tab title="Go (Local)"> Ensure Redis is running, then start the server:
+Let's test message persistence for offline clients.
 
+### Step 1: Close Your Browser
+
+Close the browser tab (disconnect the client).
+
+### Step 2: Send Messages While Offline
 ```bash
-go run main.go
-```
-The server will start on `http://localhost:8080`.
-</Tab> <Tab title="Docker"> If you have the docker-compose.yml configured:
+curl -X POST http://localhost/send \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Message 1 (offline)",
+    "to_user": "user_abc123"
+  }'
 
-```bash
-docker-compose up --build
+curl -X POST http://localhost/send \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Message 2 (offline)",
+    "to_user": "user_abc123"
+  }'
 ```
-</Tab> </Tabs>
+
+### Step 3: Reconnect
+
+Open `http://localhost` again and connect with the **same user ID** (`user_abc123`).
+
+Both messages appear immediately!
+
+<Info>
+This is the Inbox Pattern in action. Messages are stored in Redis until the client reconnects and acknowledges them.
+</Info>
+
+## Scaling Horizontally
+
+Want to handle more traffic? Just scale up:
+```bash
+docker-compose up --scale server_a=5 --scale server_b=5
+```
+
+Nginx automatically load balances across all 10 instances. No configuration needed!
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card
+    title="Understand the Architecture"
+    icon="diagram-project"
+    href="/architecture"
+  >
+    Learn how SSE, Redis, and the Inbox Pattern work together
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/api-reference"
+  >
+    Explore all available endpoints and parameters
+  </Card>
+  <Card
+    title="Integration Guides"
+    icon="book"
+    href="/guides/python-integration"
+  >
+    Integrate with Python, Node.js, or Go backends
+  </Card>
+  <Card
+    title="See Examples"
+    icon="lightbulb"
+    href="/examples/notifications"
+  >
+    Build notifications, dashboards, and more
+  </Card>
+</CardGroup>

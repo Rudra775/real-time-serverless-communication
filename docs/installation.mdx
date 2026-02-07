@@ -1,0 +1,245 @@
+---
+title: 'Installation'
+description: 'Install and configure the Real-Time Engine'
+---
+
+## System Requirements
+
+<CardGroup cols={2}>
+  <Card title="Docker" icon="docker">
+    Docker 20.10+ and Docker Compose 2.0+
+  </Card>
+  <Card title="Go (Optional)" icon="golang">
+    Go 1.21+ if running without Docker
+  </Card>
+  <Card title="Redis" icon="database">
+    Redis 6.0+ (included in Docker setup)
+  </Card>
+  <Card title="Memory" icon="memory">
+    Minimum 2GB RAM for development
+  </Card>
+</CardGroup>
+
+## Quick Install (Docker)
+
+The fastest way to get started is with Docker Compose:
+
+<Steps>
+  <Step title="Clone Repository">
+```bash
+    git clone https://github.com/Rudra775/real-time-serverless-communication.git
+    cd real-time-serverless-communication
+```
+  </Step>
+
+  <Step title="Start Services">
+```bash
+    docker-compose up -d
+```
+    
+    This starts:
+    - Nginx (port 80) - Load balancer
+    - Go Server A (internal port 8080)
+    - Go Server B (internal port 8080)
+    - Redis (port 6379)
+  </Step>
+
+  <Step title="Verify Installation">
+```bash
+    curl http://localhost/
+```
+    
+    You should see the test client HTML page.
+  </Step>
+</Steps>
+
+<Check>
+The engine is now running at `http://localhost`
+</Check>
+
+## Manual Install (Without Docker)
+
+If you prefer to run the services manually:
+
+<Steps>
+  <Step title="Install Go">
+    Download from [golang.org](https://golang.org/dl/) and verify:
+```bash
+    go version
+    # Should output: go version go1.21+ ...
+```
+  </Step>
+
+  <Step title="Install Redis">
+    <Tabs>
+      <Tab title="macOS">
+```bash
+        brew install redis
+        brew services start redis
+```
+      </Tab>
+      <Tab title="Ubuntu/Debian">
+```bash
+        sudo apt update
+        sudo apt install redis-server
+        sudo systemctl start redis
+```
+      </Tab>
+      <Tab title="Windows">
+        Download from [redis.io](https://redis.io/download) or use WSL
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Clone and Build">
+```bash
+    git clone https://github.com/Rudra775/real-time-serverless-communication.git
+    cd real-time-serverless-communication
+    go mod download
+    go build -o realtime-engine ./cmd/server
+```
+  </Step>
+
+  <Step title="Run the Engine">
+```bash
+    export REDIS_ADDR=localhost:6379
+    ./realtime-engine
+```
+    
+    Server starts on port 8080.
+  </Step>
+</Steps>
+
+## Configuration
+
+### Environment Variables
+
+<ParamField path="REDIS_ADDR" type="string" default="localhost:6379">
+  Redis connection address in format `host:port`
+</ParamField>
+
+Example:
+```bash
+export REDIS_ADDR=redis.example.com:6379
+```
+
+### Docker Compose Configuration
+
+Edit `docker-compose.yml` to customize:
+```yaml
+services:
+  server_a:
+    build: .
+    environment:
+      - REDIS_ADDR=realtime_redis:6379
+    expose:
+      - "8080"
+```
+
+### Nginx Configuration
+
+Edit `nginx.conf` for load balancing settings:
+```nginx
+upstream backend {
+    least_conn;  # Use least connections algorithm
+    server server_a:8080;
+    server server_b:8080;
+}
+```
+
+## Scaling
+
+### Add More Instances
+
+Scale horizontally by adding more server instances:
+```bash
+docker-compose up --scale server_a=5 --scale server_b=5 -d
+```
+
+This spins up 10 total instances automatically load-balanced by Nginx.
+
+### Resource Limits
+
+Set memory limits in `docker-compose.yml`:
+```yaml
+services:
+  server_a:
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+```
+
+## Verification
+
+Test your installation:
+
+<CodeGroup>
+```bash Health Check
+curl http://localhost/
+# Should return HTML page
+```
+```bash Send Test Message
+curl -X POST http://localhost/send \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Test", "to_user": "test_user"}'
+# Should return: Message sent
+```
+```bash Check Redis
+redis-cli PING
+# Should return: PONG
+```
+
+</CodeGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Port 80 already in use">
+    Change the Nginx port in `docker-compose.yml`:
+```yaml
+    nginx:
+      ports:
+        - "8080:80"  # Use port 8080 instead
+```
+  </Accordion>
+
+  <Accordion title="Redis connection failed">
+    Verify Redis is running:
+```bash
+    docker ps | grep redis
+    # or
+    redis-cli PING
+```
+  </Accordion>
+
+  <Accordion title="Go build errors">
+    Ensure Go 1.21+ is installed:
+```bash
+    go version
+    go mod tidy
+    go build ./cmd/server
+```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick Start Tutorial"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Build your first real-time app
+  </Card>
+  <Card
+    title="Architecture Overview"
+    icon="diagram-project"
+    href="/architecture"
+  >
+    Understand how it works
+  </Card>
+</CardGroup>
