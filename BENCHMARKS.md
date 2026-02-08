@@ -9,13 +9,14 @@
 ## Stress Test Results (Ingress + Egress)
 A "Full Load" test simulating 200 concurrent listeners (SSE) and 10 concurrent publishers broadcasting messages.
 
-| Metric | Result | Description |
-| :--- | :--- | :--- |
-| **Throughput** | **69 MB / 30s** | Total data broadcasted to clients |
-| **Request Rate** | **~65 req/s** | Sustained message processing rate |
-| **Latency (P95)** | **7.46 ms** | Time to process incoming messages |
-| **Stability** | **100%** | Zero connection drops for connected clients |
-| **Concurrency** | **210 VUs** | 200 Listeners + 10 Publishers active simultaneously |
+| Metric            | Result          | Description                                       |
+| :---------------- | :-------------- | :------------------------------------------------ |
+| **Throughput**    | **69 MB / 30s** | Total data broadcasted to clients                 |
+| **Request Rate**  | **~93 req/s**   | Sleep-limited publish rate (server underutilized) |
+| **Latency (P95)** | **14.12 ms**    | End-to-end message processing time                |
+| **Latency (Avg)** | **5.89 ms**     | Typical request latency                           |
+| **Stability**     | **100%**        | Zero failed or dropped requests                   |
+| **Concurrency**   | **200 VUs**     | Sustained simultaneous connections                |
 
 ### Key Takeaway
 The system demonstrated the ability to broadcast **2.3 MB of data per second** while maintaining single-digit millisecond latency (P95 < 8ms) for publishers. The SSE connection pool remained stable (100% success rate) throughout the saturation test.

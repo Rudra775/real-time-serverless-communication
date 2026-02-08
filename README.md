@@ -40,12 +40,14 @@ Unlike raw Pub/Sub (fire-and-forget), this engine persists messages for disconne
 ## 📊 Benchmarks
 Tested on local hardware using **k6** (Load Testing).
 
-| Metric | Result | Context |
-| :--- | :--- | :--- |
-| **Throughput** | **69 MB / 30s** | Data broadcasted to 200 concurrent clients |
-| **Latency (P95)** | **7.46 ms** | End-to-end delivery time |
-| **Concurrency** | **200+ VUs** | Stable SSE connections held open |
-| **Reliability** | **100%** | Zero dropped connections during saturation test |
+| Metric            | Result          | Context                                    |
+| :---------------- | :-------------- | :----------------------------------------- |
+| **Throughput**    | **69 MB / 30s** | Data broadcasted to 200 concurrent clients |
+| **Latency (P95)** | **14.12 ms**    | End-to-end processing (Nginx → Go → Redis) |
+| **Latency (Avg)** | **5.89 ms**     | Typical response time under load           |
+| **Concurrency**   | **200 VUs**     | Stable SSE connections held open           |
+| **Reliability**   | **100%**        | Zero dropped requests (11,000+ total)      |
+
 
 *(Full benchmark logs available in `BENCHMARKS.md`)*
 
