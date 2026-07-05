@@ -1,61 +1,146 @@
-# Serverless Real-Time Communication Engine (Go)
+# Stateless Real-Time SSE Gateway
 
-![Go](https://img.shields.io/badge/Go-1.24-blue) ![Redis](https://img.shields.io/badge/Redis-Pub%2FSub-red) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED) ![License](https://img.shields.io/badge/License-MIT-green)
+A distributed, stateless real-time messaging gateway built in Go. Designed as an alternative to WebSockets for serverless, auto-scaling, and containerized environments where long-lived stateful application connections are a liability.
 
-A **distributed, stateless real-time messaging engine** built in Go. Designed as a robust alternative to WebSockets for serverless and auto-scaling environments where long-lived stateful connections are a liability.
-
-This system guarantees **at-least-once delivery** using an **Inbox Pattern** backed by Redis, enabling seamless recovery from temporary disconnects without the complexity of Kafka.
+This system guarantees at-least-once delivery using an Inbox Pattern backed by Redis, enabling recovery from temporary connection drops.
 
 ---
 
-## 🚀 Motivation
-Traditional WebSocket architectures rely on sticky sessions and stateful servers, which break down in **Serverless** (AWS Lambda, Cloud Run) and **Auto-Scaling** environments.
+## The Problem: WebSockets in Serverless Architectures
 
-**This project solves "The Stateless Problem" by decoupling connection state from the server:**
-* **Server → Client:** Server-Sent Events (SSE) for efficient unidirectional egress.
-* **Client → Server:** Standard HTTP POST for stateless ingress.
-* **State & Sync:** Redis Pub/Sub for node synchronization + Redis Lists for message durability.
-
-## 🎯 System Guarantees
-* **Horizontal Scalability:** Stateless Go nodes sit behind an **Nginx Load Balancer**. Adding capacity is as simple as spawning a new container.
-* **Fault Tolerance:** If a node crashes, the load balancer reroutes traffic. The "Inbox Pattern" ensures no messages are lost during the failover.
-* **Delivery Semantics:** Effectively-once delivery (via Message IDs and Client ACKs).
-* **Performance:** Benchmarked to handle **10k+ concurrent connections** with sub-10ms latency.
+Traditional WebSocket architectures require stateful, persistent TCP connections between the client and the application server. This model breaks down in serverless (e.g., AWS Lambda, Google Cloud Run) and auto-scaling container environments:
+* **TCP Statefulness:** Serverless instances are ephemeral and terminate frequently, causing constant connection drops.
+* **Lack of Sticky Sessions:** Routing incoming client requests to the specific server holding their connection state requires complex load-balancer configurations.
+* **Egress Bottlenecks:** Stateless compute tiers are not optimized to maintain thousands of idle TCP connections open simultaneously.
 
 ---
 
-## 🏗 Architecture
-The system uses a **Sidecar Pattern**. You run this engine alongside your main backend (Python/Node/PHP). Your backend posts messages to this engine, which handles the "last mile" delivery to thousands of connected clients.
+## The Solution: Decoupled Ingress and Egress
 
+This project solves the stateless real-time communication problem by decoupling the connection state from your main application server using a sidecar gateway.
 
+```
+                  +-----------------------------------+
+                  |           Client Browser          |
+                  +-----------------------------------+
+                     /                             ^
+      1. POST /action                               \ 4. Stream SSE
+                   /                                 \
+                  v                                   \
+        +------------------+                   +---------------+
+        |   Main Backend   |                   |  Go SSE Node  |
+        | (Flask, Node, ..)|                   +---------------+
+        +------------------+                           ^
+                  |                                    |
+            2. POST /send                         3. Pub/Sub
+                  |                                    |
+                  v                                    |
+        +------------------------------------------------------+
+        |                    Redis Cluster                     |
+        |              (Pub/Sub & Inbox Queues)                |
+        +------------------------------------------------------+
+```
 
-### The "Inbox Pattern" (Reliability)
-Unlike raw Pub/Sub (fire-and-forget), this engine persists messages for disconnected users:
-1.  **On Publish:** Message is pushed to a Redis List (`inbox:user_id`) *and* published to the live channel.
-2.  **On Connect:** The engine flushes the Redis List to the client immediately.
-3.  **On ACK:** Client confirms receipt, and the engine clears the inbox.
+1. **Client Ingress (Standard HTTP):** Clients send mutations or actions to your main application backend using standard HTTP POST requests. 
+2. **Server Egress (Server-Sent Events):** The Go SSE Gateway manages the outbound streaming connections. Your backend publishes events to the Go Gateway, which routes them to the correct clients.
+3. **Stateless Scalability:** Go gateway nodes do not share connection state. If a client reconnects to a different gateway node, Redis synchronizes the delivery.
 
 ---
 
-## 📊 Benchmarks
-Tested on local hardware using **k6** (Load Testing).
+## Key Features
 
-| Metric            | Result          | Context                                    |
-| :---------------- | :-------------- | :----------------------------------------- |
-| **Throughput**    | **69 MB / 30s** | Data broadcasted to 200 concurrent clients |
-| **Latency (P95)** | **14.12 ms**    | End-to-end processing (Nginx → Go → Redis) |
-| **Latency (Avg)** | **5.89 ms**     | Typical response time under load           |
-| **Concurrency**   | **200 VUs**     | Stable SSE connections held open           |
-| **Reliability**   | **100%**        | Zero dropped requests (11,000+ total)      |
-
-
-*(Full benchmark logs available in `BENCHMARKS.md`)*
+* **Generic Channel Routing:** Clients subscribe to dynamic channels (e.g. `room_123` or `ticker_AAPL`) to receive targeted broadcasts.
+* **Stateless Authorization (JWT):** Connection handshakes are authorized statelessly using JSON Web Tokens (JWT) signed by your main backend, containing the list of allowed channels.
+* **Reliable Delivery (Inbox Pattern):** Important messages are persisted in Redis queues if a client is offline, flushed automatically when they reconnect, and deleted once the client acknowledges (ACK) receipt.
+* **Administrative Isolation:** Ingress control endpoints (`/send`) are protected with API keys and blocked at the reverse-proxy level, allowing only secure server-to-server publishing.
 
 ---
 
-## 🔌 API Reference
+## Architecture and Configuration
 
-### 1. Connect (SSE Stream)
-Establishes a persistent connection. Automatically flushes pending messages from the Inbox.
+The gateway runs as a sidecar next to your main backend application. A typical deployment configuration involves Nginx acting as a load balancer and reverse proxy, routing client traffic to the Go instances.
+
+### load Balancer (Nginx) Configuration
+Nginx handles public SSL termination and routes traffic based on endpoints:
+* `GET /connect` -> Publicly routed to the Go gateway (disabling proxy buffering for real-time streaming).
+* `POST /ack` -> Publicly routed to the Go gateway (authenticated via client JWT).
+* `POST /send` -> Blocked externally; only accessible within the private VPC/network.
+
+---
+
+## API Specifications
+
+### 1. Establish SSE Connection
+Establishes a persistent Server-Sent Events stream.
+
 ```http
-GET /connect?id=<user_id>
+GET /connect?id={client_id}&channels=general,room_A
+```
+
+In production mode (when `JWT_SECRET` is configured), connection is established using a JWT:
+
+```http
+GET /connect?token={signed_jwt}
+```
+
+*The JWT must contain standard claims along with the `channels` string array.*
+
+### 2. Publish Message (Internal Server Only)
+Publishes a message to a channel. If `to_user` or `to_users` is specified, the message is stored in the target user's offline queue.
+
+* **URL:** `/send`
+* **Method:** `POST`
+* **Headers:** `X-API-Key: {your_secret_key}`
+* **Payload:**
+```json
+{
+  "channel": "room_A",
+  "to_user": "user_123",
+  "data": {
+    "type": "notification",
+    "title": "Update",
+    "message": "Hello World"
+  }
+}
+```
+
+### 3. Acknowledge Receipt
+Clears the client's offline message queue in Redis. Clients call this immediately upon establishing a connection.
+
+* **URL:** `/ack`
+* **Method:** `POST`
+* **Payload (Development):**
+```json
+{
+  "user_id": "user_123"
+}
+```
+* **Payload (Production):**
+```json
+{
+  "user_id": "user_123",
+  "token": "{signed_jwt}"
+}
+```
+
+---
+
+## Benchmarks
+
+Tested on standard hardware running local Docker containers under stress testing with `k6`:
+
+| Metric | Result | Context |
+| :--- | :--- | :--- |
+| **Throughput** | **69 MB / 30s** | Data broadcasted to 200 concurrent clients |
+| **Latency (P95)** | **14.12 ms** | End-to-end processing (Nginx -> Go -> Redis) |
+| **Latency (Avg)** | **5.89 ms** | Typical response time under load |
+| **Concurrency** | **200 VUs** | Stable SSE connections held open |
+| **Reliability** | **100%** | Zero dropped requests (11,000+ total) |
+
+*(Full details and test runner configuration are available in `BENCHMARKS.md`.)*
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
