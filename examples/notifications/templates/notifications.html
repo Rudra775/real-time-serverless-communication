@@ -81,19 +81,35 @@ curl -X POST http://localhost:5000/send-notification \
         const notificationSound = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZUA8PTKXh8bllHQU2jdXzzn0pBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQU1i9X00HwpBSh+zPLaizsIGGS57OihUhENTqzn8LRiGgU7k9z00YUwBSJ3yu7cjj0HHWi98N+USg8SSKrj8bllHQ==');
 
         function connect() {
-            eventSource = new EventSource(`http://localhost:8080/connect?id=${userId}`);
+            // Connect through Nginx (port 80) and subscribe to the user's private channel
+            eventSource = new EventSource(`http://localhost/connect?id=${userId}&channels=user_${userId}`);
             
-            eventSource.onopen = () => {
+            eventSource.onopen = async () => {
                 updateStatus('Connected', 'green');
+                
+                // Acknowledge connection to clear any inbox backlog
+                try {
+                    await fetch('http://localhost/ack', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_id: userId })
+                    });
+                } catch (err) {
+                    console.error("Failed to acknowledge inbox", err);
+                }
             };
 
             eventSource.onmessage = (event) => {
-                const data = JSON.parse(event.data);
+                const outer = JSON.parse(event.data);
                 
-                if (data.type === 'notification') {
-                    showNotification(data);
-                } else if (data.type === 'connected') {
-                    console.log('Connected as', data.user_id);
+                // Extract inner payload
+                const payload = outer.Payload || outer.payload || outer;
+                const notificationData = payload.data || payload;
+                
+                if (notificationData && notificationData.type === 'notification') {
+                    showNotification(notificationData);
+                } else if (outer.type === 'connected') {
+                    console.log('Connected as', outer.user_id);
                 }
             };
 
@@ -103,6 +119,7 @@ curl -X POST http://localhost:5000/send-notification \
                 setTimeout(connect, 2000);
             };
         }
+
 
         function showNotification(data) {
             notificationCount++;

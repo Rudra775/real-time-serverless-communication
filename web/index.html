@@ -34,7 +34,8 @@
     <script>
         // Generate a random user ID for demo purposes
         const userId = 'user_' + Math.floor(Math.random() * 10000);
-        const eventSource = new EventSource(`http://localhost/connect?id=${userId}`);
+        // Connect to the 'general' channel by default
+        const eventSource = new EventSource(`http://localhost/connect?id=${userId}&channels=general`);
         const chat = document.getElementById('chat');
         const dot = document.getElementById('dot');
         const statusText = document.getElementById('statusText');
@@ -67,15 +68,27 @@ eventSource.onmessage = function(event) {
     addMessage(messageText, 'received');
 };
 
-        eventSource.onopen = () => {
+        eventSource.onopen = async () => {
             dot.classList.add('online');
             statusText.innerText = `Connected as ${userId}`;
+
+            // Acknowledge connection to clear any inbox backlog
+            try {
+                await fetch('http://localhost/ack', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: userId })
+                });
+            } catch (err) {
+                console.error("Failed to acknowledge inbox", err);
+            }
         };
 
         eventSource.onerror = () => {
             dot.classList.remove('online');
             statusText.innerText = 'Disconnected (Reconnecting...)';
         };
+
 
         // 2. Send Messages (HTTP POST)
         async function sendMessage() {
