@@ -6,12 +6,17 @@ import (
 	"sync"
 )
 
+type ChannelMessage struct {
+	Channel string
+	Payload []byte
+}
+
 type Manager struct {
 	clients    map[string]*Client
 	clientsMu  sync.RWMutex
 	Register   chan *Client
 	Unregister chan *Client
-	Broadcast  chan []byte
+	Broadcast  chan ChannelMessage
 }
 
 func NewManager() *Manager {
@@ -19,7 +24,7 @@ func NewManager() *Manager {
 		clients:    make(map[string]*Client),
 		Register:   make(chan *Client),
 		Unregister: make(chan *Client),
-		Broadcast:  make(chan []byte),
+		Broadcast:  make(chan ChannelMessage),
 	}
 }
 
@@ -57,19 +62,23 @@ func (m *Manager) Start(ctx context.Context) {
 			log.Printf("Client unregistered: %s", client.ID)
 
 		case msg := <-m.Broadcast:
-			m.clientsMu.Lock() // CHANGE: Use write lock for broadcasts
+			m.clientsMu.Lock() // Use write lock for broadcasts
 			for id, client := range m.clients {
-				select {
-				case client.Send <- msg:
-					// Success
-				default:
-					// Buffer full - delete immediately
-					delete(m.clients, id)
-					close(client.Send)
-					log.Printf("Client %s buffer full, dropped", id)
+				// Only send if the client is subscribed to this channel
+				if client.IsSubscribed(msg.Channel) {
+					select {
+					case client.Send <- msg.Payload:
+						// Success
+					default:
+						// Buffer full - delete immediately
+						delete(m.clients, id)
+						close(client.Send)
+						log.Printf("Client %s buffer full, dropped", id)
+					}
 				}
 			}
 			m.clientsMu.Unlock()
 		}
 	}
 }
+

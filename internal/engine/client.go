@@ -9,9 +9,19 @@ import (
 
 // Client represents a single connected user
 type Client struct {
-	ID   string      // Unique ID (e.g., user_123)
-	Send chan []byte // Buffered channel for outgoing messages
+	ID       string          // Unique ID (e.g., user_123)
+	Channels map[string]bool // Set of channels this client is subscribed to
+	Send     chan []byte     // Buffered channel for outgoing messages
 }
+
+// IsSubscribed checks if the client is subscribed to the given channel
+func (c *Client) IsSubscribed(channel string) bool {
+	if c.Channels == nil {
+		return false
+	}
+	return c.Channels[channel]
+}
+
 
 // ServeSSE establishes a Server-Sent Events stream for real-time message delivery.
 // This is designed for use behind a reverse proxy (Nginx/Cloudflare) that handles TLS.

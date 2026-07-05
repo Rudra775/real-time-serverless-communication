@@ -37,16 +37,16 @@ func (b *RedisBroker) Publish(ctx context.Context, channel string, msg []byte) e
 	return b.Client.Publish(ctx, channel, msg).Err()
 }
 
-// Subscribe listens to a channel and passes messages to a go channel
-func (b *RedisBroker) Subscribe(ctx context.Context, channel string) (<-chan []byte, func(), error) {
-	pubsub := b.Client.Subscribe(ctx, channel)
+// SubscribePattern listens to a pattern and passes messages to a go channel
+func (b *RedisBroker) SubscribePattern(ctx context.Context, pattern string) (<-chan *redis.Message, func(), error) {
+	pubsub := b.Client.PSubscribe(ctx, pattern)
 
-	//Check if subscription succeeded
+	// Check if subscription succeeded
 	if _, err := pubsub.Receive(ctx); err != nil {
 		return nil, nil, err
 	}
 
-	msgChan := make(chan []byte)
+	msgChan := make(chan *redis.Message)
 
 	// Cleanup function
 	cleanup := func() {
@@ -65,7 +65,7 @@ func (b *RedisBroker) Subscribe(ctx context.Context, channel string) (<-chan []b
 					return
 				}
 				select {
-				case msgChan <- []byte(msg.Payload):
+				case msgChan <- msg:
 				case <-ctx.Done():
 					return
 				}
