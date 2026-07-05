@@ -34,7 +34,7 @@ The Real-Time Engine exposes three main endpoints:
     icon="paper-plane"
     href="/api-reference/send"
   >
-    Send message to user
+    Publish message to channel
   </Card>
   <Card
     title="Acknowledge"
@@ -45,44 +45,31 @@ The Real-Time Engine exposes three main endpoints:
   </Card>
 </CardGroup>
 
-## Authentication
+## Authentication and Security
 
-<Warning>
-This engine does not include built-in authentication. You must implement auth in your backend before calling `/send`.
-</Warning>
+The engine supports two layers of authentication:
 
-Recommended flow:
+1. **Client-to-Gateway Security (JWT Mode):** Managed statelessly using JSON Web Tokens (JWT) verified via a shared `JWT_SECRET`. Clients connect via `/connect?token={token}` and `/ack` with their credentials.
+2. **Server-to-Gateway Security (API Key):** Protected using the `REALTIME_API_KEY` secret. All administrative publishing calls to `/send` must include the `X-API-Key` header.
+
+### Secure Sequence Flow
+
 ```mermaid
 sequenceDiagram
     participant C as Client
     participant B as Your Backend
     participant E as Real-Time Engine
     
-    C->>B: POST /api/send-notification<br/>(with JWT)
-    B->>B: Verify JWT
-    B->>E: POST /send<br/>(user_id from JWT)
-    E-->>C: SSE message delivered
+    C->>B: 1. Authenticate / Login
+    B->>B: 2. Generate signed JWT\n(contains allowed channels)
+    B-->>C: 3. Return JWT
+    C->>E: 4. GET /connect?token=JWT\n(Establish SSE connection)
+    E->>E: 5. Verify JWT Signature\n(Subscribe to allowed channels)
+    B->>E: 6. POST /send\n(with X-API-Key and target channel)
+    E-->>C: 7. SSE message delivered to channel
 ```
 
-Example in Python:
-```python
-from flask import request
-import jwt
-
-@app.route('/send_notification', methods=['POST'])
-def send_notification():
-    # Verify user is authenticated
-    token = request.headers.get('Authorization')
-    user = jwt.decode(token, SECRET_KEY)
-    
-    # Publish to engine
-    requests.post('http://realtime-engine/send', json={
-        'message': request.json['message'],
-        'to_user': user['id']
-    })
-    
-    return {'status': 'sent'}
-```
+---
 
 ## Error Handling
 
@@ -92,30 +79,25 @@ All endpoints return standard HTTP status codes:
 |:-----|:--------|
 | 200 | Success |
 | 400 | Bad Request (invalid JSON or missing required fields) |
+| 401 | Unauthorized (invalid or missing JWT token / API Key) |
 | 500 | Internal Server Error |
 
-Error response format:
-```json
-{
-  "error": "id param required"
-}
-```
+---
 
 ## Message Format
 
-Messages are broadcast in this JSON format:
+Messages are broadcast to clients in this JSON format:
 ```json
 {
   "type": "broadcast",
   "payload": {
-    "message": "Your notification here",
-    "to_user": "user_123",
-    "timestamp": "2026-01-25T10:30:00Z"
+    "channel": "room_A",
+    "data": {
+      "type": "notification",
+      "title": "Alert",
+      "message": "System Update"
+    }
   },
-  "roomID": "general"
+  "room_id": "room_A"
 }
 ```
-
-<Info>
-The current implementation uses a single room called "general". Multi-room support can be added by modifying the Subscribe channel.
-</Info>

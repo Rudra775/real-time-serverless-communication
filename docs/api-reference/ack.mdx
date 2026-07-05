@@ -1,171 +1,67 @@
 ---
 title: 'Acknowledge'
 api: 'POST /ack'
-description: 'Clear all messages from a user inbox'
+description: 'Clear all pending messages from a user inbox'
 ---
 
 ## Overview
 
-Clears all pending messages from a user's Inbox in Redis. Call this after the client has successfully received and processed all messages.
+Clears all pending messages from a user's Inbox in Redis. Call this after the client has successfully received and displayed all backlog messages.
 
-<Note>
-The current implementation clears the ENTIRE inbox. For individual message acknowledgment, you would need to modify the ClearInbox function to accept a message ID.
-</Note>
+---
 
-## Endpoint
-POST /ack
+## Endpoint Configuration
 
-## Request Body
+* **URL:** `/ack`
+* **Method:** `POST`
+
+---
+
+## Request Body Fields
 
 <ParamField body="user_id" type="string" required>
-  User's unique identifier whose inbox should be cleared
+  The unique identifier of the user whose inbox should be cleared.
 </ParamField>
 
-## Response
-acknowledged
+<ParamField body="token" type="string">
+  The client's signed JWT token. Required if `JWT_SECRET` is configured (unless bypassed by `X-API-Key`).
+</ParamField>
 
-## Examples
+---
 
-<CodeGroup>
-```javascript JavaScript
-// After receiving all messages via SSE
-eventSource.onmessage = async (event) => {
-  const message = JSON.parse(event.data);
-  
-  // Display message to user
-  displayNotification(message.payload);
-  
-  // Acknowledge (clear inbox)
-  await fetch('http://localhost/ack', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      user_id: 'user_123'
-    })
-  });
-};
-```
-```python Python
-import requests
+## Authorization Modes
 
-# After processing all messages
-requests.post('http://localhost/ack', json={
-    'user_id': 'user_123'
-})
-```
-```go Go
-package main
+### 1. Client-Side JWT Validation (Production)
+If `JWT_SECRET` is enabled, the gateway validates that the JWT signature is correct and that the user inside the token matches `user_id`.
 
-import (
-    "bytes"
-    "encoding/json"
-    "net/http"
-)
-
-func acknowledgeMessages(userID string) {
-    payload := map[string]string{
-        "user_id": userID,
-    }
-    
-    body, _ := json.Marshal(payload)
-    http.Post("http://localhost/ack", "application/json", bytes.NewBuffer(body))
-}
-```
-
-</CodeGroup>
-
-## Behavior
-
-### What Happens
-
-The server executes a Lua script atomically:
-```lua
-local msgs = redis.call('LRANGE', KEYS[1], 0, -1)
-redis.call('DEL', KEYS[1])
-return msgs
-```
-
-This:
-1. Retrieves all messages from `inbox:user_id`
-2. Deletes the entire list
-3. Returns the messages (for potential future use)
-
-### Why It Matters
-
-Without acknowledgment:
-- Inbox never clears
-- Client receives duplicates on every reconnect
-- Redis memory usage grows unbounded
-
-<Warning>
-Always call `/ack` after successfully processing messages to prevent memory leaks and duplicate delivery.
-</Warning>
-
-## Implementation Details
-
-From the source code:
-```go
-func (b *RedisBroker) ClearInbox(ctx context.Context, userID string) ([][]byte, error) {
-    key := "inbox:" + userID
-
-    script := redis.NewScript(`
-        local msgs = redis.call('LRANGE', KEYS[1], 0, -1)
-        redis.call('DEL', KEYS[1])
-        return msgs
-    `)
-
-    result, err := script.Run(ctx, b.Client, []string{key}).Result()
-    // ... conversion logic
-}
-```
-
-<Tip>
-For production use cases requiring individual message acknowledgment, modify this to accept a message ID and use `LREM` instead of `DEL`.
-</Tip>
-
-## Best Practices
-
-### Acknowledge After Display
 ```javascript
-const processedMessages = new Set();
-
-eventSource.onmessage = async (event) => {
-  const message = JSON.parse(event.data);
-  
-  // Only acknowledge after successfully displaying
-  try {
-    await displayNotification(message.payload);
-    processedMessages.add(message);
-    
-    // Acknowledge only after all messages processed
-    if (allMessagesReceived()) {
-      await fetch('/ack', {
-        method: 'POST',
-        body: JSON.stringify({ user_id: userId })
-      });
-    }
-  } catch (error) {
-    console.error('Failed to process message:', error);
-    // Don't acknowledge if processing failed
-  }
-};
+await fetch('http://localhost/ack', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    user_id: 'user_123',
+    token: signedJWT
+  })
+});
 ```
 
-### Handle Network Failures
-```javascript
-async function acknowledgeWithRetry(userId, maxRetries = 3) {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      await fetch('/ack', {
-        method: 'POST',
-        body: JSON.stringify({ user_id: userId })
-      });
-      return; // Success
-    } catch (error) {
-      if (i === maxRetries - 1) throw error;
-      await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));
-    }
-  }
-}
+### 2. Backend Server Bypass
+If a secure backend needs to clear a user's inbox, it can bypass the JWT check by sending the gateway API key in the `X-API-Key` header:
+
+```bash
+curl -X POST http://localhost/ack \
+  -H "X-API-Key: your_secret_key" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "user_123"}'
 ```
 
+---
+
+## System Behavior
+
+Upon receiving a valid request, the server executes a Lua script atomically in Redis:
+1. Fetches all pending messages stored in `inbox:{user_id}`.
+2. Deletes the Redis key `inbox:{user_id}`.
+3. Returns the list of cleared messages.
+
+This prevents redundant message delivery and memory bloat on connection reconnects.

@@ -6,153 +6,106 @@ description: 'Establish a Server-Sent Events connection'
 
 ## Overview
 
-Opens a persistent SSE stream for real-time message delivery. Automatically flushes pending messages from the user's Inbox before starting the live stream.
+Opens a persistent Server-Sent Events (SSE) stream for real-time message delivery. Automatically flushes pending messages from the user's Inbox queue before starting the live stream.
 
-## Endpoint
-GET /connect?id={user_id}
+---
 
-## Query Parameters
+## Endpoint Configuration
 
-<ParamField query="id" type="string" required>
-  Unique identifier for the user/client. Used to route messages and retrieve inbox.
-</ParamField>
+### 1. Production Mode (JWT Authentication)
+In production, clients must connect using a JWT signed by your main backend:
 
-## Response
+```http
+GET /connect?token={signed_jwt}
+```
 
-<ResponseField name="Content-Type" type="string">
-  `text/event-stream`
-</ResponseField>
+#### JWT Claims Schema
+The JWT signature is validated using `JWT_SECRET` and must contain:
+* `sub` (or `user_id`): The client's unique user identifier.
+* `channels`: An array of strings representing the channels this client is authorized to subscribe to.
 
-The server sends events in this format:
-data: {"type":"broadcast","payload":{"message":"Hello"},"roomID":"general"}
-data: {"type":"broadcast","payload":{"message":"World"},"roomID":"general"}
+### 2. Development Mode (Zero-Config)
+For development purposes (when `JWT_SECRET` is not set), you can pass credentials in the query parameters:
 
-## Request Example
+```http
+GET /connect?id={client_id}&channels=general,room_A
+```
+
+*By default, all connections join the `general` channel.*
+
+---
+
+## Response Header
+* **Content-Type:** `text/event-stream`
+* **Cache-Control:** `no-cache`
+* **Connection:** `keep-alive`
+* **X-Accel-Buffering:** `no` (Disables Nginx buffering)
+
+---
+
+## Client Examples
 
 <CodeGroup>
-```html JavaScript (Browser)
+```javascript JavaScript (Browser)
+// Connection query in Development Mode
 const userId = 'user_123';
-const eventSource = new EventSource(`http://localhost/connect?id=${userId}`);
+const eventSource = new EventSource(`http://localhost/connect?id=${userId}&channels=general,room_A`);
 
-eventSource.onopen = () => {
+eventSource.onopen = async () => {
   console.log('Connected to real-time engine');
-};
-
-eventSource.onmessage = (event) => {
-  const message = JSON.parse(event.data);
-  console.log('Received:', message.payload);
   
-  // Acknowledge receipt
-  fetch('/ack', {
+  // Acknowledge connection to clear offline inbox
+  await fetch('http://localhost/ack', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ user_id: userId })
   });
 };
 
-eventSource.onerror = (error) => {
-  console.log('Connection error, reconnecting...');
+eventSource.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  const payload = data.Payload || data.payload;
+  console.log('Received:', payload);
 };
 ```
+
 ```python Python
 import sseclient
 import requests
 
 def listen_to_messages(user_id):
+    # Establish connection
     response = requests.get(
-        f'http://localhost/connect?id={user_id}',
+        f'http://localhost/connect?id={user_id}&channels=general',
         stream=True,
         headers={'Accept': 'text/event-stream'}
     )
     
     client = sseclient.SSEClient(response)
     
+    # Acknowledge connection
+    requests.post('http://localhost/ack', json={'user_id': user_id})
+    
     for event in client.events():
         message = json.loads(event.data)
         print(f"Received: {message['payload']}")
-        
-        # Acknowledge
-        requests.post('http://localhost/ack', json={'user_id': user_id})
 ```
-```go Go
-package main
-
-import (
-    "bufio"
-    "encoding/json"
-    "fmt"
-    "net/http"
-    "strings"
-)
-
-func main() {
-    resp, _ := http.Get("http://localhost/connect?id=user_123")
-    defer resp.Body.Close()
-    
-    scanner := bufio.NewScanner(resp.Body)
-    for scanner.Scan() {
-        line := scanner.Text()
-        if strings.HasPrefix(line, "data: ") {
-            data := strings.TrimPrefix(line, "data: ")
-            var message map[string]interface{}
-            json.Unmarshal([]byte(data), &message)
-            fmt.Println("Received:", message["payload"])
-        }
-    }
-}
-```
-
 </CodeGroup>
 
-## Behavior
+---
 
-### On Connect
+## System Behavior
 
-1. Server creates a new Client with buffered channel (capacity 256 messages)
-2. Server retrieves pending messages from Redis: `LRANGE inbox:user_id 0 -1`
-3. Server flushes all pending messages to client immediately
-4. Server registers client with the Manager
-5. Server subscribes to Redis channel "general"
-6. Server opens live SSE stream
+### On Connection Handshake
+1. The gateway extracts the client identity and channel permissions (via query params or JWT verification).
+2. The gateway retrieves and flushes all pending messages from `inbox:{client_id}` in Redis immediately.
+3. The gateway registers the connection locally inside its active clients map.
+4. The client receives live updates published to any of its subscribed channels.
 
 ### During Connection
+* A heartbeat ping (`: keepalive`) is sent every 15 seconds to prevent load balancer timeouts.
+* Browser clients automatically reconnect if the connection drops.
 
-- Messages published to "general" channel are delivered instantly
-- Connection kept alive with periodic heartbeat
-- Browser automatically reconnects if connection drops
-
-### On Disconnect
-
-- Server unregisters client from Manager
-- Messages continue to accumulate in Inbox (if `to_user` is specified)
-- On reconnect, pending messages are flushed again
-
-<Tip>
-The browser's EventSource API handles reconnection automatically. You don't need to write reconnection logic!
-</Tip>
-
-## Implementation Details
-
-From the source code:
-```go
-client := &engine.Client{
-    ID:   clientID,
-    Send: make(chan []byte, 256), // Buffer up to 256 messages
-}
-
-// Retrieve missed messages
-missedMsgs, _ := redisBroker.GetPendingMessages(r.Context(), clientID)
-
-// Push to client
-for _, msgBytes := range missedMsgs {
-    client.Send <- msgBytes
-}
-
-// Register and start SSE loop
-mgr.Register <- client
-client.ServeSSE(w, r)
-```
-
-<Note>
-The 256-message buffer prevents blocking if the client is slow to consume messages. Tune this value based on your use case.
-</Note>
+### On Disconnection
+* The node removes the client from its local registry.
+* Targeted messages (`to_user`) sent to offline clients continue to accumulate in their Redis inbox.

@@ -1,148 +1,77 @@
 ---
 title: 'Send'
 api: 'POST /send'
-description: 'Send a message to a specific user or broadcast to all'
+description: 'Publish a message to a channel and queue for offline users'
 ---
 
 ## Overview
 
-Publishes a message to Redis. If `to_user` is specified, the message is saved to that user's Inbox AND broadcast. If omitted, the message is only broadcast to currently connected clients.
+Publishes a message to a specific channel. If targeted user IDs are specified, the message is also saved to their inboxes in Redis for reliable delivery.
 
-## Endpoint
-POST /send
+---
 
-## Request Body
+## Endpoint Configuration
 
-<ParamField body="message" type="string" required>
-  The message content to send
+* **URL:** `/send`
+* **Method:** `POST`
+* **Headers:** `X-API-Key: {your_secret_key}` (Required if `REALTIME_API_KEY` is configured)
+
+---
+
+## Request Body Fields
+
+<ParamField body="channel" type="string">
+  The target channel (e.g. `room_A`). If omitted, defaults to `general`.
 </ParamField>
 
 <ParamField body="to_user" type="string">
-  Target user's ID. If provided, message is saved to their Inbox for reliable delivery.
+  Single target user ID. If provided, the message is saved in `inbox:{user_id}` for reliable delivery.
 </ParamField>
 
-<ParamField body="..." type="any">
-  Any additional fields you include will be passed through in the payload
+<ParamField body="to_users" type="array">
+  Array of target user ID strings. The message is cloned and saved to each user's inbox list.
 </ParamField>
 
-## Response
-Message sent
+<ParamField body="data" type="object" required>
+  The message payload that will be delivered to connected clients.
+</ParamField>
+
+---
 
 ## Examples
 
 <CodeGroup>
-```bash cURL (Direct Message)
+```bash cURL
 curl -X POST http://localhost/send \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your_secret_key" \
   -d '{
-    "message": "Your order has shipped!",
-    "to_user": "user_123"
+    "channel": "orders_feed",
+    "to_user": "user_123",
+    "data": {
+      "type": "notification",
+      "title": "Order Shipped",
+      "message": "Your package is on its way!"
+    }
   }'
 ```
-```bash cURL (Broadcast)
-curl -X POST http://localhost/send \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "System maintenance in 10 minutes"
-  }'
-```
+
 ```python Python
 import requests
+import os
 
-# Send to specific user (reliable)
-response = requests.post('http://localhost/send', json={
-    'message': 'You have a new message from Alice',
-    'to_user': 'user_456',
-    'notification_type': 'chat',
-    'sender': 'alice_789'
-})
+api_key = os.getenv("REALTIME_API_KEY")
 
-# Broadcast to all connected clients
-response = requests.post('http://localhost/send', json={
-    'message': 'New features are now available!',
-    'type': 'announcement'
-})
+response = requests.post(
+    'http://localhost/send',
+    headers={'X-API-Key': api_key},
+    json={
+        'channel': 'announcements',
+        'data': {
+            'type': 'broadcast',
+            'message': 'System maintenance scheduled for tonight.'
+        }
+    }
+)
 ```
-```javascript Node.js
-// Send with custom payload
-await fetch('http://localhost/send', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    message: 'Real-time update!',
-    to_user: 'user_123',
-    priority: 'high',
-    action_url: '/notifications'
-  })
-});
-```
-
 </CodeGroup>
-
-## Use Cases
-
-### Simple Notification
-```json
-{
-  "message": "Your payment was successful",
-  "to_user": "user_456"
-}
-```
-
-### Rich Notification
-```json
-{
-  "message": "Order shipped",
-  "to_user": "user_456",
-  "order_id": "ORD-12345",
-  "tracking_url": "https://track.example.com/12345",
-  "estimated_delivery": "2026-01-27"
-}
-```
-
-### System Broadcast
-```json
-{
-  "message": "System maintenance in 5 minutes",
-  "severity": "warning"
-}
-```
-
-## Implementation Details
-
-From the source code:
-```go
-// 1. Check if this is a Direct Message
-targetUser, _ := payload["to_user"].(string)
-
-msg := engine.Message{
-    Type:    "broadcast",
-    Payload: marshalPayload(payload),
-    RoomID:  "general",
-}
-data, _ := json.Marshal(msg)
-
-// 2. If for specific user, save to inbox
-if targetUser != "" {
-    redisBroker.SaveMessage(ctx, targetUser, data)
-}
-
-// 3. Publish for real-time delivery
-redisBroker.Publish(ctx, "general", data)
-```
-
-<Info>
-Messages are stored in Redis Lists with a 24-hour TTL: `inbox:user_id`
-</Info>
-
-## Broadcast vs Direct Message
-
-| Feature | Broadcast (no `to_user`) | Direct (with `to_user`) |
-|:--------|:-------------------------|:------------------------|
-| Persistence | No (fire-and-forget) | Yes (Inbox Pattern) |
-| Offline Users | Don't receive | Receive on reconnect |
-| Use Case | System alerts, tickers | Notifications, messages |
-
-<Warning>
-For important messages, always include `to_user` to ensure delivery even if the user is offline.
-</Warning>
